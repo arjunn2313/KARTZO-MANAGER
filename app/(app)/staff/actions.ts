@@ -9,8 +9,8 @@ export type Result = { ok: boolean; message: string };
 
 const daySchema = z.object({
   date: z.iso.date(),
-  staff_amount: z.number().int().min(0).max(1_000_000),
-  staff_orders_taken: z.number().int().min(0).max(10_000).nullable(),
+  staff_amount: z.number().int().min(0).max(1_000_000).optional(),
+  staff_orders_taken: z.number().int().min(0).max(10_000).nullable().optional(),
   staff_bonus: z.number().int().min(0).max(1_000_000).optional(),
   staff_bonus_note: z
     .string()
@@ -103,4 +103,15 @@ export async function saveBusinessSettings(input: z.input<typeof settingsSchema>
   if (error) return { ok: false, message: friendly(error.message) };
   refresh();
   return { ok: true, message: "Saved" };
+}
+
+/** Saves only the staff name (from the receipt). */
+export async function saveStaffName(name: string): Promise<Result> {
+  const supabase = await requireUser();
+  const value = String(name ?? "").trim().slice(0, 80);
+  if (!value) return { ok: false, message: "Enter a name" };
+  const { error } = await supabase.from("app_settings").upsert({ key: "staff_name", value }, { onConflict: "key" });
+  if (error) return { ok: false, message: friendly(error.message) };
+  refresh();
+  return { ok: true, message: "Name saved" };
 }

@@ -2,6 +2,7 @@
 
 import { toPng } from "html-to-image";
 import { useRef, useState } from "react";
+import { saveStaffName } from "./actions";
 import type { StaffDay, Week } from "./staff-view";
 
 export type Business = { name: string; address: string; phone: string; staffName: string; ready: boolean };
@@ -20,6 +21,17 @@ export function ReceiptDialog({ week, business, today, onClose }: { week: Week; 
   const ref = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState<null | "share" | "download" | "print">(null);
   const [note, setNote] = useState<string | null>(null);
+  const [staffName, setStaffName] = useState(business.staffName);
+  const [nameSaved, setNameSaved] = useState(!!business.staffName);
+  const [savingName, setSavingName] = useState(false);
+
+  async function saveName() {
+    setSavingName(true);
+    const r = await saveStaffName(staffName);
+    setSavingName(false);
+    if (r.ok) setNameSaved(true);
+    else setNote(r.message);
+  }
 
   const worked = week.days.filter((d) => d.amount > 0 || d.bonus > 0);
   const wages = worked.reduce((s, d) => s + d.amount, 0);
@@ -105,6 +117,29 @@ export function ReceiptDialog({ week, business, today, onClose }: { week: Week; 
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5">
+          {!nameSaved && (
+            <div className="mx-auto mb-3 flex max-w-[460px] items-center gap-2 rounded-lg bg-white p-3 ring-1 ring-amber-200">
+              <label className="shrink-0 text-sm font-medium text-stone-700" htmlFor="staff-name">
+                Staff name
+              </label>
+              <input
+                id="staff-name"
+                value={staffName}
+                autoFocus
+                onChange={(e) => setStaffName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && staffName.trim() && saveName()}
+                placeholder="Type the name"
+                className="min-w-0 flex-1 rounded-md border border-stone-300 px-2.5 py-1.5 text-sm outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20"
+              />
+              <button
+                onClick={saveName}
+                disabled={savingName || !staffName.trim()}
+                className="rounded-md bg-emerald-700 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+              >
+                {savingName ? "Saving…" : "Save"}
+              </button>
+            </div>
+          )}
           {/* ---------- the receipt itself (this is what becomes the image) ---------- */}
           <div ref={ref} className="mx-auto w-full max-w-[460px] bg-white p-7 text-stone-900" style={{ fontFamily: "system-ui, -apple-system, 'Segoe UI', sans-serif" }}>
             <div className="flex items-start justify-between gap-4">
@@ -128,7 +163,7 @@ export function ReceiptDialog({ week, business, today, onClose }: { week: Week; 
             <div className="mt-6 grid grid-cols-2 gap-3 rounded-lg bg-stone-50 p-3 text-sm">
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-stone-400">Paid to</div>
-                <div className="font-semibold">{business.staffName || "Staff"}</div>
+                <div className="font-semibold">{staffName.trim() || "Staff"}</div>
               </div>
               <div>
                 <div className="text-[11px] uppercase tracking-wide text-stone-400">Period</div>
@@ -203,11 +238,7 @@ export function ReceiptDialog({ week, business, today, onClose }: { week: Week; 
             <div className="mt-6 text-center text-[11px] text-stone-400">Thank you for your work this week.</div>
           </div>
           {/* ---------- end receipt ---------- */}
-          {!business.staffName && (
-            <p className="mx-auto mt-3 max-w-[460px] text-xs text-stone-500">
-              Tip: add the staff member&apos;s name in <b>Settings → Business details</b> so it shows on the receipt.
-            </p>
-          )}
+
         </div>
 
         <div className="space-y-2 px-5 py-4">
