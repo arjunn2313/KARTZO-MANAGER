@@ -2,6 +2,8 @@ import { Suspense } from "react";
 import { FormSkeleton } from "@/components/skeleton";
 import { PageHeader } from "@/components/coming-soon";
 import { createClient } from "@/lib/supabase/server";
+import { requestToday } from "@/lib/today";
+import { BackupCard } from "./backup";
 import { BusinessForm } from "./business";
 import { CategoryRow } from "./categories";
 import { CourierForm, type Courier } from "./forms";
@@ -12,6 +14,16 @@ export default function SettingsPage() {
       <PageHeader title="Settings" />
 
       <section className="space-y-3">
+        <div>
+          <h2 className="text-lg font-semibold">Monthly backup</h2>
+          <p className="text-sm text-stone-500">Download everything from a month, with all the calculations, as an Excel file.</p>
+        </div>
+        <Suspense fallback={<FormSkeleton />}>
+          <Backup />
+        </Suspense>
+      </section>
+
+      <section className="space-y-3 pt-4">
         <div>
           <h2 className="text-lg font-semibold">Business details</h2>
           <p className="text-sm text-stone-500">Shown on payout receipts.</p>
@@ -53,6 +65,14 @@ export default function SettingsPage() {
       </section>
     </div>
   );
+}
+
+async function Backup() {
+  const today = await requestToday();
+  const [y, m] = today.split("-").map(Number);
+  // this month and the 23 before it
+  const months = Array.from({ length: 24 }, (_, i) => new Date(Date.UTC(y, m - 1 - i, 1)).toISOString().slice(0, 7));
+  return <BackupCard months={months} />;
 }
 
 async function Business() {

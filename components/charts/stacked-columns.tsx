@@ -4,7 +4,7 @@ import { useState } from "react";
 import { CHART, compactNum, compactRs, niceTicks, rs, shortDate, useWidth } from "./chart-utils";
 import { Tooltip } from "./trend-chart";
 
-export type ColumnPoint = { date: string; label?: string; values: Record<string, number> };
+export type ColumnPoint = { date: string; label?: string; /** tooltip heading (defaults to label) */ title?: string; values: Record<string, number> };
 export type ColumnSeries = { key: string; name: string; color: string };
 
 const PAD = { top: 16, right: 12, bottom: 28, left: 40 };
@@ -17,12 +17,21 @@ export function StackedColumns({
   height = 240,
   unit = "pcs",
   money = false,
+  allLabels = false,
+  showValues = false,
+  hideAxis = false,
 }: {
   points: ColumnPoint[];
   series: ColumnSeries[];
   height?: number;
   unit?: string;
   money?: boolean;
+  /** label every column (for short charts like Sun–Sat) */
+  allLabels?: boolean;
+  /** print each column's total above it */
+  showValues?: boolean;
+  /** no ₹ scale on the left or grid lines, just the baseline (use with showValues) */
+  hideAxis?: boolean;
 }) {
   const fmtAxis = money ? compactRs : compactNum;
   const fmt = (n: number) => (money ? rs(n) : String(n));
@@ -31,26 +40,28 @@ export function StackedColumns({
 
   const totals = points.map((p) => series.reduce((s, se) => s + (p.values[se.key] ?? 0), 0));
   const ticks = niceTicks(0, Math.max(...totals, 1));
-  const yMax = ticks[ticks.length - 1];
-  const innerW = Math.max(10, width - PAD.left - PAD.right);
+  const yMax = hideAxis ? Math.max(...totals, 1) : ticks[ticks.length - 1];
+  const pad = hideAxis ? { ...PAD, left: 4, right: 4 } : PAD;
+  const innerW = Math.max(10, width - pad.left - pad.right);
   const innerH = height - PAD.top - PAD.bottom;
   const n = points.length;
   const band = innerW / Math.max(1, n);
   const barW = Math.max(3, Math.min(24, band * 0.6));
-  const y = (v: number) => PAD.top + innerH - (v / (yMax || 1)) * innerH;
-  const cx = (i: number) => PAD.left + band * i + band / 2;
-  const labelEvery = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(innerW / 56))));
+  const valueTop = showValues ? 14 : 0; // room for the value labels above the tallest column
+  const y = (v: number) => PAD.top + innerH - (v / (yMax || 1)) * (innerH - valueTop);
+  const cx = (i: number) => pad.left + band * i + band / 2;
+  const labelEvery = allLabels ? 1 : Math.max(1, Math.ceil(n / Math.max(2, Math.floor(innerW / 56))));
 
   return (
     <div ref={ref} className="relative w-full select-none">
       {width > 0 && n > 0 && (
         <svg width={width} height={height} role="img" aria-label="Pieces sold per day">
-          {ticks.map((t) => (
+          {ticks.filter((t) => !hideAxis || t === 0).map((t) => (
             <g key={t}>
-              <line x1={PAD.left} x2={PAD.left + innerW} y1={y(t)} y2={y(t)} stroke={t === 0 ? CHART.axis : CHART.grid} strokeWidth={1} />
-              <text x={PAD.left - 8} y={y(t)} dy="0.32em" textAnchor="end" fontSize={11} fill={CHART.muted} style={{ fontVariantNumeric: "tabular-nums" }}>
+              <line x1={pad.left} x2={pad.left + innerW} y1={y(t)} y2={y(t)} stroke={t === 0 ? CHART.axis : CHART.grid} strokeWidth={1} />
+              {!hideAxis && <text x={pad.left - 8} y={y(t)} dy="0.32em" textAnchor="end" fontSize={11} fill={CHART.muted} style={{ fontVariantNumeric: "tabular-nums" }}>
                 {fmtAxis(t)}
-              </text>
+              </text>}
             </g>
           ))}
           {points.map((p, i) => {
@@ -76,6 +87,14 @@ export function StackedColumns({
               </g>
             );
           })}
+          {showValues &&
+            points.map((p, i) =>
+              totals[i] > 0 ? (
+                <text key={`v-${p.date}`} x={cx(i)} y={y(totals[i]) - 5} textAnchor="middle" fontSize={10.5} fontWeight={600} fill={CHART.ink2} style={{ fontVariantNumeric: "tabular-nums" }}>
+                  {money ? compactRs(totals[i]) : compactNum(totals[i])}
+                </text>
+              ) : null,
+            )}
           {points.map((p, i) =>
             (i % labelEvery === 0 && (n - 1) - i >= labelEvery * 0.6) || i === n - 1 ? (
               <text key={`x-${p.date}`} x={cx(i)} y={height - 8} textAnchor="middle" fontSize={11} fill={CHART.muted}>
@@ -87,7 +106,7 @@ export function StackedColumns({
           {points.map((p, i) => (
             <rect
               key={`hit-${p.date}`}
-              x={PAD.left + band * i}
+              x={pad.left + band * i}
               y={PAD.top}
               width={band}
               height={innerH}
@@ -103,7 +122,7 @@ export function StackedColumns({
       )}
       {hover !== null && width > 0 && (
         <Tooltip left={cx(hover)} width={width}>
-          <div className="mb-1 text-xs text-stone-500">{points[hover].label ?? shortDate(points[hover].date)}</div>
+          <div className="mb-1 text-xs text-stone-500">{points[hover].title ?? points[hover].label ?? shortDate(points[hover].date)}</div>
           {series.map((s) => (
             <div key={s.key} className="flex items-center gap-2 text-sm">
               <span className="size-2.5 rounded-sm" style={{ background: s.color }} />

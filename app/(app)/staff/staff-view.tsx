@@ -3,10 +3,7 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { CHART, rs, shortDate } from "@/components/charts/chart-utils";
-import {
-  StackedColumns,
-  SwatchLegend,
-} from "@/components/charts/stacked-columns";
+import { WeekChart } from "@/components/charts/week-chart";
 import { saveStaffDay, setStaffPay, setWeekPaid, type Result } from "./actions";
 import { ReceiptDialog, type Business } from "./receipt";
 import { StaffLink } from "./staff-link";
@@ -118,14 +115,14 @@ export function StaffView({
     { key: "paid", name: "Paid", color: CHART.series[0] },
     { key: "unpaid", name: "Not paid yet", color: CHART.series[1] },
   ];
-  const points = [...weeks].reverse().map((w) => {
-    const i = weekInfo(w);
-    return {
-      date: w.start,
-      label: shortDate(w.start),
-      values: { paid: i.total - i.unpaid, unpaid: i.unpaid },
-    };
-  });
+  // per day: what's been paid and what's still due (same rule as the week totals)
+  const dayValues = weeks.flatMap((w) =>
+    w.days.map((d) => {
+      const pay = d.amount + d.bonus;
+      const due = !d.paid ? pay : d.paidAmount === null ? 0 : Math.max(0, pay - d.paidAmount);
+      return { date: d.date, values: { paid: pay - due, unpaid: due } };
+    }),
+  );
 
   function showToast(r: Result) {
     setToast(r);
@@ -182,16 +179,13 @@ export function StaffView({
         />
       </div>
 
-      <section className="rounded-2xl bg-white p-5 ring-1 ring-stone-200">
-        <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
-          <div>
-            <h2 className="font-semibold">Weekly payouts</h2>
-            <p className="text-xs text-stone-500">Last {shownWeeks} weeks</p>
-          </div>
-          <SwatchLegend series={series} />
-        </div>
-        <StackedColumns points={points} series={series} height={200} money />
-      </section>
+<WeekChart
+        title="Staff pay"
+        series={series}
+        weeks={weeks.map((w) => w.start)}
+        days={dayValues}
+        currentWeek={weeks.find((w) => w.current)?.start ?? weeks[0]?.start ?? today}
+      />
 
       <div className="space-y-3">
         {weeks.map((w, idx) => (

@@ -5,7 +5,7 @@ import { CardsSkeleton } from "@/components/skeleton";
 import { eachDay, shiftDays } from "@/lib/dashboard";
 import { createClient } from "@/lib/supabase/server";
 import { requestToday } from "@/lib/today";
-import { EarningsChart } from "./earnings-chart";
+import { WeekChart } from "@/components/charts/week-chart";
 
 // Private read-only page for the staff member. Opened from a secret link (/s/<token>), no login.
 // All data comes from the staff_dashboard() database function, which checks the token and
@@ -242,25 +242,6 @@ async function Dashboard({
   const periodOrders = weeks.reduce((s, w) => s + w.orders, 0);
   const periodWaiting = weeks.reduce((s, w) => s + w.waiting, 0);
 
-  // chart: each day (last 14 days, or the whole month up to today) and each week, oldest first
-  const pastDays = weeks
-    .flatMap((w) => w.days)
-    .filter((x) => !x.future)
-    .sort((a, b) => (a.date < b.date ? -1 : 1));
-  const daily = (month ? pastDays : pastDays.slice(-14)).map((x) => ({
-    date: x.date,
-    label: shortDate(x.date),
-    values: { orders: x.pay },
-  }));
-  const weekly = [...weeks]
-    .reverse()
-    .filter((w) => w.start <= today)
-    .map((w) => ({
-      date: w.start,
-      label: shortDate(w.days[0]?.date ?? w.start),
-      values: { orders: w.total },
-    }));
-
   return (
     <div className="space-y-4">
       <header className="flex items-center justify-between gap-3">
@@ -359,11 +340,14 @@ async function Dashboard({
         />
       </section>
 
-      <EarningsChart
+      <WeekChart
         key={month ?? "recent"}
-        daily={daily}
-        weekly={weekly}
-        period={month ? `in ${monthName(month)}` : null}
+        title="My earnings"
+        series={[{ key: "orders", name: "Earned", color: "#1baf7a" }]}
+        weeks={weeks.map((w) => w.start)}
+        days={weeks.flatMap((w) => w.days.map((x) => ({ date: x.date, values: { orders: x.pay } })))}
+        currentWeek={thisWeek}
+        height={190}
       />
 
       {/* weeks */}
