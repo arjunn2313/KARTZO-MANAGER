@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import { ItemsEditor } from "@/components/items-editor";
-import { matchProduct, parseWhatsAppOrders } from "@/lib/parser/whatsapp";
+import { extractTrackingIds, matchProduct, parseWhatsAppOrders } from "@/lib/parser/whatsapp";
 import { itemsCost, listPrice, type Item } from "@/lib/pricing";
 import { codFeeFor, isKeralaPin, shippingFor } from "@/lib/shipping";
 import { bumpCode } from "@/lib/orders";
 import { isValidPhone, isValidPin, normalizePhone, normalizePin } from "@/lib/validation";
 import { createOrdersBulk, findRecentOrdersByPhones } from "../actions";
-import type { CourierOption, ProductOption } from "./order-form";
+import { TakenByToggle, type CourierOption, type ProductOption } from "./order-form";
 
 type Kind = "cod" | "paid" | "replacement";
 
@@ -25,6 +25,8 @@ type Row = {
   kind: Kind | "";
   order_value: number;
   advance_paid: number;
+  tracking: string;
+  taken_by: "staff" | "owner";
   parseProblems: string[];
   raw: string;
 };
@@ -47,10 +49,12 @@ export function PasteOrders({
   products,
   couriers,
   today,
+  staffName,
 }: {
   products: ProductOption[];
   couriers: CourierOption[];
   today: string;
+  staffName: string;
 }) {
   const defaultCourier = couriers.find((c) => c.name.toLowerCase().includes("india post")) ?? couriers[0];
   const [text, setText] = useState("");
@@ -60,6 +64,8 @@ export function PasteOrders({
   const [firstCode, setFirstCode] = useState("");
   const [courierId, setCourierId] = useState(defaultCourier?.id ?? "");
   const [status, setStatus] = useState<"new" | "dispatched">("new");
+  const [trackedDispatched, setTrackedDispatched] = useState(true);
+  const [takenAll, setTakenAll] = useState<"staff" | "owner">("staff");
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string[] | null>(null);
   const [pending, startTransition] = useTransition();
@@ -88,6 +94,8 @@ export function PasteOrders({
         kind,
         order_value: value,
         advance_paid: kind === "paid" ? value : 0,
+        tracking: o.tracking,
+        taken_by: takenAll,
         parseProblems: o.problems,
         raw: o.raw,
       };
@@ -119,6 +127,15 @@ export function PasteOrders({
     return m;
   }, [rows]);
 
+  const trackingCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of rows ?? []) {
+      const t = r.tracking.trim().toUpperCase();
+      if (r.include && t) m.set(t, (m.get(t) ?? 0) + 1);
+    }
+    return m;
+  }, [rows]);
+
   function issues(r: Row) {
     const e: string[] = [];
     if (!r.customer_name.trim()) e.push("name");
@@ -128,6 +145,8 @@ export function PasteOrders({
     if (!r.items.length || r.items.some((it) => !it.product_id)) e.push("product");
     if (!r.kind) e.push("kind");
     if (r.advance_paid > r.order_value) e.push("value");
+    const t = r.tracking.trim().toUpperCase();
+    if (t && (!/^[A-Z0-9-]{6,25}$/.test(t) || (trackingCounts.get(t) ?? 0) > 1)) e.push("tracking");
     return e;
   }
 
@@ -175,6 +194,7 @@ export function PasteOrders({
         first_code: firstCode,
         courier_id: courierId,
         status,
+        tracked_dispatched: trackedDispatched,
         rows: included.map((x) => ({
           customer_name: x.customer_name,
           phone: x.phone,
@@ -184,6 +204,8 @@ export function PasteOrders({
           kind: x.kind as Kind,
           order_value: x.order_value,
           advance_paid: x.advance_paid,
+          tracking_id: x.tracking,
+          taken_by: x.taken_by,
         })),
       });
       if (!r.ok) return setError(r.message);
@@ -227,7 +249,8 @@ export function PasteOrders({
           <div className="mt-3 flex flex-wrap items-center gap-3">
             <p className="flex-1 text-xs text-stone-500">
               Each order ends with the <b>Mob:</b> line. Use <b>COD: 499</b>, <b>PREPAID</b> or <b>REPLACEMENT</b>. Add{" "}
-              <b>x2</b> after the item for 2 pieces.
+              <b>x2</b> after the item for 2 pieces. Tracking ID is optional: add <b>Track: CX064397338IN</b> at the end of the Mob line or on the line
+              below it.
             </p>
             <button
               onClick={read}
@@ -255,7 +278,7 @@ export function PasteOrders({
       </div>
 
       {/* Shared settings */}
-      <div className="grid gap-3 rounded-xl bg-white p-4 ring-1 ring-stone-200 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 rounded-xl bg-white p-4 ring-1 ring-stone-200 sm:grid-cols-2 lg:grid-cols-5">
         <label className="text-xs font-medium text-stone-500">
           Order date (all)
           <input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className={`${input} ${ok} mt-1`} />
@@ -267,7 +290,7 @@ export function PasteOrders({
             onChange={(e) => setFirstCode(e.target.value.toUpperCase())}
             placeholder="Auto, e.g. KZT2395"
             autoComplete="off"
-            className={`${input} ${firstCode && !codeRange ? bad : ok} mt-1 uppercase`}
+            className={`${input} ${firstCode && !codeRange ? bad : ok} mt-1 uppercase placeholder:normal-case`}
           />
           <span className={`mt-1 block font-normal ${firstCode && !codeRange ? "text-red-600" : "text-stone-400"}`}>
             {!firstCode
@@ -294,7 +317,39 @@ export function PasteOrders({
             <option value="dispatched">Dispatched</option>
           </select>
         </label>
+        <div className="text-xs font-medium text-stone-500">
+          Taken by (all)
+          <div className="mt-1">
+            <TakenByToggle
+              value={takenAll}
+              staffName={staffName}
+              onChange={(v) => {
+                setTakenAll(v);
+                setRows((prev) => prev!.map((r) => ({ ...r, taken_by: v })));
+              }}
+            />
+          </div>
+          <span className="mt-1 block font-normal text-stone-400">
+            {(() => {
+              const mine = included.filter((r) => r.taken_by === "owner").length;
+              return mine ? `${included.length - mine} by ${staffName} · ${mine} by you` : `All count for ${staffName}'s pay once dispatched`;
+            })()}
+          </span>
+        </div>
       </div>
+
+      <BulkTracking
+        orders={included.map((r) => ({ key: r.key, n: rows.indexOf(r) + 1, name: r.customer_name, tracking: r.tracking }))}
+        onApply={(byKey) => setRows((prev) => prev!.map((r) => (byKey.has(r.key) ? { ...r, tracking: byKey.get(r.key)! } : r)))}
+      />
+
+      {status === "new" && included.some((r) => r.tracking.trim()) && (
+        <label className="flex items-center gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-900 ring-1 ring-emerald-200">
+          <input type="checkbox" checked={trackedDispatched} onChange={(e) => setTrackedDispatched(e.target.checked)} className="size-4 accent-emerald-700" />
+          Save the {included.filter((r) => r.tracking.trim()).length} order{included.filter((r) => r.tracking.trim()).length === 1 ? "" : "s"} that have a tracking ID as
+          <b>Dispatched</b> (the rest stay New)
+        </label>
+      )}
 
       {/* Orders */}
       <div className="space-y-3">
@@ -320,6 +375,7 @@ export function PasteOrders({
                   aria-label={`Include order ${i + 1}`}
                 />
                 <span className="text-xs font-semibold text-stone-400">#{i + 1}</span>
+                <TakenByToggle size="sm" value={r.taken_by} staffName={staffName} onChange={(v) => update(r.key, { taken_by: v })} />
                 <div className="flex flex-wrap gap-1.5">
                   {errs.length > 0 && <Tag tone="bad">Needs fixing</Tag>}
                   {dupInPaste && <Tag tone="warn">Same phone twice in this paste</Tag>}
@@ -358,6 +414,19 @@ export function PasteOrders({
                     inputMode="numeric"
                     className={`${input} ${errs.includes("pincode") ? bad : ok}`}
                   />
+                  <input
+                    value={r.tracking}
+                    onChange={(e) => update(r.key, { tracking: e.target.value.toUpperCase().replace(/\s/g, "") })}
+                    placeholder="Tracking ID (optional)"
+                    autoComplete="off"
+                    className={`${input} ${errs.includes("tracking") ? bad : ok} font-mono text-[13px] uppercase placeholder:font-sans placeholder:normal-case`}
+                    aria-label="Tracking ID"
+                  />
+                  {errs.includes("tracking") && (
+                    <div className="text-xs text-red-600">
+                      {(trackingCounts.get(r.tracking.trim().toUpperCase()) ?? 0) > 1 ? "Same tracking ID on two orders" : "Check this tracking ID"}
+                    </div>
+                  )}
                 </div>
                 {/* address */}
                 <textarea
@@ -483,4 +552,111 @@ function Tag({ children, tone }: { children: React.ReactNode; tone?: "bad" | "wa
   const cls =
     tone === "bad" ? "bg-red-100 text-red-700" : tone === "warn" ? "bg-amber-100 text-amber-800" : "bg-stone-100 text-stone-600";
   return <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${cls}`}>{children}</span>;
+}
+
+/* ---------- paste a whole list of tracking IDs, given out to the orders in order ---------- */
+
+function BulkTracking({
+  orders,
+  onApply,
+}: {
+  orders: { key: number; n: number; name: string; tracking: string }[];
+  onApply: (byKey: Map<number, string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [onlyEmpty, setOnlyEmpty] = useState(false);
+  const ids = extractTrackingIds(text);
+  const targets = onlyEmpty ? orders.filter((o) => !o.tracking.trim()) : orders;
+  const pairs = targets.map((o, i) => ({ ...o, id: ids[i] ?? "" }));
+  const extra = ids.length - targets.length;
+  const willAdd = Math.min(ids.length, pairs.length);
+
+  if (!open)
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex w-full items-center justify-between gap-3 rounded-xl bg-white px-4 py-3 text-left text-sm ring-1 ring-stone-200 hover:bg-stone-50"
+      >
+        <span>
+          <b className="font-medium text-stone-800">Paste tracking IDs for all orders</b>
+          <span className="block text-xs text-stone-500">
+            Already booked? Paste the list from the post office receipt or Excel. 1st ID goes to order #1, 2nd to #2, and so on.
+          </span>
+        </span>
+        <span className="shrink-0 font-medium text-emerald-700">Open</span>
+      </button>
+    );
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-emerald-300">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="font-medium text-stone-900">Paste tracking IDs</h3>
+          <p className="text-xs text-stone-500">One per line, in the same order as the orders below. Other text and phone numbers are ignored.</p>
+        </div>
+        <button type="button" onClick={() => setOpen(false)} className="rounded-md px-2 py-1 text-stone-400 hover:bg-stone-100" aria-label="Close">
+          ✕
+        </button>
+      </div>
+
+      <div className="mt-3 grid gap-4 lg:grid-cols-2">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={8}
+          autoFocus
+          placeholder={"CX064397338IN\nCX064397339IN\nCX064397340IN"}
+          className="w-full rounded-lg border border-stone-300 px-3 py-2 font-mono text-sm uppercase outline-none placeholder:normal-case focus:border-emerald-600 focus:ring-2 focus:ring-emerald-600/20"
+        />
+        <div className="min-w-0">
+          <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <span className="font-medium text-stone-600">
+              {ids.length} ID{ids.length === 1 ? "" : "s"} found · {targets.length} order{targets.length === 1 ? "" : "s"}
+            </span>
+            <label className="flex items-center gap-1.5 text-stone-600">
+              <input type="checkbox" checked={onlyEmpty} onChange={(e) => setOnlyEmpty(e.target.checked)} className="size-3.5 accent-emerald-700" />
+              Only orders without a tracking ID
+            </label>
+          </div>
+          <ol className="max-h-56 divide-y divide-stone-100 overflow-y-auto rounded-lg ring-1 ring-stone-200">
+            {pairs.map((p) => (
+              <li key={p.key} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                <span className="w-7 shrink-0 text-xs text-stone-400">#{p.n}</span>
+                <span className="min-w-0 flex-1 truncate text-stone-700">{p.name || "—"}</span>
+                <span className={`shrink-0 font-mono text-xs ${p.id ? "text-emerald-700" : "text-stone-300"}`}>{p.id || "no ID"}</span>
+              </li>
+            ))}
+            {!pairs.length && <li className="px-3 py-3 text-center text-xs text-stone-400">Every order already has a tracking ID.</li>}
+          </ol>
+          {ids.length > 0 && extra !== 0 && (
+            <p className={`mt-1.5 text-xs ${extra > 0 ? "text-red-600" : "text-amber-700"}`}>
+              {extra > 0
+                ? `${extra} more ID${extra === 1 ? "" : "s"} than orders, so the last ${extra === 1 ? "one is" : `${extra} are`} left out. Check none are missing above.`
+                : `${-extra} order${extra === -1 ? "" : "s"} will get no ID. You can type ${extra === -1 ? "it" : "them"} in on the order.`}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 flex justify-end gap-2">
+        <button type="button" onClick={() => setOpen(false)} className="rounded-lg px-4 py-2 text-sm text-stone-600 hover:bg-stone-100">
+          Cancel
+        </button>
+        <button
+          type="button"
+          disabled={!willAdd}
+          onClick={() => {
+            onApply(new Map(pairs.filter((p) => p.id).map((p) => [p.key, p.id])));
+            setText("");
+            setOpen(false);
+          }}
+          className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-50"
+        >
+          Add {willAdd} tracking ID{willAdd === 1 ? "" : "s"}
+        </button>
+      </div>
+    </div>
+  );
 }

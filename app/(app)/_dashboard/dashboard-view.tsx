@@ -21,6 +21,8 @@ export type DashData = {
   codInTransitAll: number;
   /** months whose other expenses are taken off in this range, and the running month's total so far */
   otherCosts: { months: string[]; thisMonth: number };
+  /** from this date staff pay is counted from orders (not typed) */
+  staffAutoFrom: string | null;
 };
 
 export const monthName = (m: string) =>
@@ -135,6 +137,7 @@ export function DashboardView({ data }: { data: DashData }) {
           today={range.today}
           otherCosts={t.otherCosts}
           costMonths={data.otherCosts.months.map(monthName)}
+          staffAutoFrom={data.staffAutoFrom}
         />
       </Card>
     </div>

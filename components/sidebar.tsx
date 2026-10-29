@@ -14,6 +14,7 @@ type IconName =
   | "staff"
   | "expenses"
   | "ads"
+  | "chart"
   | "cod"
   | "settings"
   | "menu"
@@ -29,6 +30,7 @@ const PATHS: Record<IconName, string> = {
   stock: "M3 20V10l4-3v13H3Zm6 0V4l4 3v13H9Zm6 0V9l4-3v14h-4Z",
   staff: "M9 11a4 4 0 1 1 0-8 4 4 0 0 1 0 8Zm-7 9c0-3.3 3.1-6 7-6s7 2.7 7 6H2Zm15.5-9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM18 13c2.6.3 4 2.4 4 5h-4c0-1.9-.7-3.7-2-5h2Z",
   expenses: "M3 6h18v12H3V6Zm2 2v8h14V8H5Zm7 1.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5Z",
+  chart: "M3 3h2v16h16v2H3V3Zm4 10h3v5H7v-5Zm5-6h3v11h-3V7Zm5 3h3v8h-3v-8Z",
   ads: "M3 10v4h3l5 4V6l-5 4H3Zm13.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4ZM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6Z",
   cod: "M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18Zm-1 4v1.1c-1.5.3-2.5 1.3-2.5 2.6 0 1.6 1.3 2.2 3 2.6 1.3.3 1.7.6 1.7 1.1 0 .5-.6.9-1.5.9-1 0-1.7-.4-2-1.1l-1.6.8c.5 1 1.5 1.7 2.9 1.9V18h2v-1.2c1.5-.3 2.4-1.3 2.4-2.6 0-1.7-1.4-2.3-3.1-2.7-1.2-.3-1.6-.5-1.6-1 0-.4.5-.8 1.3-.8.8 0 1.4.3 1.7.9l1.6-.8c-.4-.9-1.3-1.5-2.3-1.7V7h-2Z",
   settings: "m12 2 2 2.3 3-.4.6 3 2.6 1.5-1.2 2.8 1.2 2.8-2.6 1.5-.6 3-3-.4L12 22l-2-2.3-3 .4-.6-3-2.6-1.5L5 12.8 3.8 10l2.6-1.5.6-3 3 .4L12 2Zm0 6.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z",
@@ -50,7 +52,10 @@ type NavItem = { href: string; label: string; icon: IconName; soon?: boolean };
 const GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: "Overview",
-    items: [{ href: "/", label: "Dashboard", icon: "dashboard" }],
+    items: [
+      { href: "/", label: "Dashboard", icon: "dashboard" },
+      { href: "/reports/products", label: "Product report", icon: "chart" },
+    ],
   },
   {
     title: "Sales",

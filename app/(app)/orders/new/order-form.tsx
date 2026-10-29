@@ -35,10 +35,12 @@ export function OrderForm({
   products,
   couriers,
   today,
+  staffName,
 }: {
   products: ProductOption[];
   couriers: CourierOption[];
   today: string;
+  staffName: string;
 }) {
   const defaultCourier = couriers.find((c) => c.name.toLowerCase().includes("india post")) ?? couriers[0];
 
@@ -48,6 +50,8 @@ export function OrderForm({
   const [payment, setPayment] = useState<Pay>("cod");
   const [discount, setDiscount] = useState(0);
   const [partAdvance, setPartAdvance] = useState(DEFAULT_PART_ADVANCE);
+  // who took the order (kept between orders, e.g. for a whole day you take orders yourself)
+  const [takenBy, setTakenBy] = useState<"staff" | "owner">("staff");
 
   // ----- shipping -----
   const [courierId, setCourierId] = useState(defaultCourier?.id ?? "");
@@ -164,6 +168,7 @@ export function OrderForm({
         tracking_id: text("tracking_id"),
         status: text("status") === "dispatched" ? "dispatched" : "new",
         notes: text("notes"),
+        taken_by: takenBy,
       });
       if (!r.ok) {
         setError({ message: r.message, field: r.field });
@@ -407,6 +412,11 @@ export function OrderForm({
               </select>
             </Field>
           </div>
+          <div className="mt-4">
+            <Field label="Order taken by" hint={takenBy === "staff" ? `${staffName} gets paid for this order once it's dispatched` : "Not counted in staff pay"}>
+              <TakenByToggle value={takenBy} onChange={setTakenBy} staffName={staffName} />
+            </Field>
+          </div>
           <div className="mt-4 grid gap-4 sm:grid-cols-[200px_1fr_200px]">
             <Field label="Order ID (optional)" hint="Blank = next number" error={fieldErr("order_code")}>
               <input
@@ -595,6 +605,44 @@ function Row({
     <div className="flex justify-between gap-3">
       <dt className={muted ? "text-stone-500" : "text-stone-600"}>{label}</dt>
       <dd className={`${color} ${strong ? "font-semibold" : ""}`}>{value}</dd>
+    </div>
+  );
+}
+
+/** "Order taken by: <staff> / Me" switch, shared by the single-order form and the WhatsApp paste. */
+export function TakenByToggle({
+  value,
+  onChange,
+  staffName,
+  size = "md",
+}: {
+  value: "staff" | "owner";
+  onChange: (v: "staff" | "owner") => void;
+  staffName: string;
+  size?: "sm" | "md";
+}) {
+  const pad = size === "sm" ? "px-2 py-0.5 text-[11px]" : "px-3 py-1.5 text-sm";
+  return (
+    <div className="inline-flex rounded-lg bg-stone-100 p-0.5" role="radiogroup" aria-label="Order taken by">
+      {(
+        [
+          ["staff", staffName],
+          ["owner", "Me"],
+        ] as const
+      ).map(([k, label]) => (
+        <button
+          key={k}
+          type="button"
+          role="radio"
+          aria-checked={value === k}
+          onClick={() => onChange(k)}
+          className={`rounded-md font-medium transition ${pad} ${
+            value === k ? (k === "staff" ? "bg-white text-emerald-800 shadow-sm ring-1 ring-emerald-200" : "bg-white text-stone-900 shadow-sm ring-1 ring-stone-200") : "text-stone-500"
+          }`}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   );
 }

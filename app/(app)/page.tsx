@@ -137,6 +137,7 @@ async function Dashboard({ searchParams }: { searchParams: Promise<Search> }) {
   const t = totals(orders, rangeDays, costsForMonths(costs, costMonths));
   const prev = totals(orders, prevDays, costsForMonths(costs, monthsCovered(prevFrom, prevTo, today)));
   const thisMonthCosts = costsForMonths(costs, [today.slice(0, 7)]);
+  const { data: autoRow } = await supabase.from("app_settings").select("value").eq("key", "staff_auto_from").maybeSingle();
 
   const mode = chartDays.length > 45 ? "week" : "day";
   const chart = bucket(chartDays, mode);
@@ -156,6 +157,7 @@ async function Dashboard({ searchParams }: { searchParams: Promise<Search> }) {
 
   const data: DashData = {
     otherCosts: { months: costMonths, thisMonth: thisMonthCosts },
+    staffAutoFrom: autoRow?.value ?? null,
     range: { key, from, to, days, chartFrom, mode, today },
     totals: t,
     prev: { sales: prev.sales, orders: prev.orders, netProfit: prev.netProfit, grossProfit: prev.grossProfit, hasData: prev.orders > 0 },

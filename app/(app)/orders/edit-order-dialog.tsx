@@ -55,6 +55,7 @@ export function EditOrderDialog({
     cod_fee: o.cod_fee,
     tracking_id: o.tracking_id ?? "",
     notes: o.notes ?? "",
+    taken_by: (o.taken_by ?? "staff") as "staff" | "owner",
   });
   const [items, setItems] = useState<EditItem[]>(
     o.items?.length
@@ -126,6 +127,7 @@ export function EditOrderDialog({
         rto_charge: f.rto_charge,
         cod_fee: f.kind === "cod" ? f.cod_fee : 0,
         tracking_id: f.tracking_id,
+        taken_by: f.taken_by,
         notes: f.notes,
       });
       if (!r.ok) return setError({ message: r.message, field: r.field });
@@ -285,6 +287,12 @@ export function EditOrderDialog({
             <div className="mt-3">
               <Field label="Notes">
                 <input value={f.notes} onChange={(e) => set("notes", e.target.value)} className={input} />
+              </Field>
+              <Field label="Order taken by" hint={f.taken_by === "staff" ? "Counts for staff pay once dispatched" : "Not counted in staff pay"}>
+                <select value={f.taken_by} onChange={(e) => set("taken_by", e.target.value as "staff" | "owner")} className={input}>
+                  <option value="staff">Staff</option>
+                  <option value="owner">Me</option>
+                </select>
               </Field>
             </div>
           </Section>

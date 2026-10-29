@@ -4,7 +4,7 @@ import { useState } from "react";
 import { OrderForm, type CourierOption, type ProductOption } from "./order-form";
 import { PasteOrders } from "./paste-orders";
 
-export function AddOrderTabs(props: { products: ProductOption[]; couriers: CourierOption[]; today: string }) {
+export function AddOrderTabs(props: { products: ProductOption[]; couriers: CourierOption[]; today: string; staffName: string }) {
   const [tab, setTab] = useState<"paste" | "single">("paste");
 
   if (props.products.length === 0 || props.couriers.length === 0) {

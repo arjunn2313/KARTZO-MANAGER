@@ -1,10 +1,11 @@
 "use client";
 
 import { Pager } from "@/components/pager";
+import { copyText } from "@/lib/dispatch";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Fragment, useMemo, useState, useTransition } from "react";
 import { dmy, orderItemsLabel, rs, STATUSES, STATUS_LABEL, STATUS_STYLE, type OrderRow, type OrderStatus } from "@/lib/orders";
-import { saveReturnDetails, setOrderDates, setTrackingIds, updateOrderStatus, type BulkResult } from "./actions";
+import { saveReturnDetails, setOrderDates, setTakenBy, setTrackingIds, updateOrderStatus, type BulkResult } from "./actions";
 import { EditOrderDialog, type EditCourier, type EditProduct } from "./edit-order-dialog";
 
 type Summary = { orders: number; sales: number; profit: number; rto: number; codPending: number };
@@ -18,6 +19,7 @@ export function OrdersTable({
   pageCount,
   pageSize,
   total,
+  trackingIds,
 }: {
   products: EditProduct[];
   couriers: EditCourier[];
@@ -26,6 +28,8 @@ export function OrdersTable({
   page: number;
   pageCount: number;
   pageSize: number;
+  /** tracking IDs of every order in the current filter (all pages) */
+  trackingIds: string[];
   total: number;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -72,6 +76,20 @@ export function OrdersTable({
     });
   }
 
+  async function copyTracking(ids: string[], what: string) {
+    if (!ids.length) return showToast({ ok: false, message: "None of these orders has a tracking ID yet" });
+    const ok = await copyText(ids.join("\n"));
+    showToast(ok ? { ok: true, message: `${ids.length} tracking ID${ids.length === 1 ? "" : "s"} copied${what}` } : { ok: false, message: "Couldn't copy. Try again." });
+  }
+
+  function changeTakenBy(ids: string[], who: "staff" | "owner") {
+    startTransition(async () => {
+      const r = await setTakenBy(ids, who);
+      showToast(r);
+      if (r.ok) setSelected(new Set());
+    });
+  }
+
   return (
     <div className="space-y-3">
       {/* Summary strip */}
@@ -82,6 +100,25 @@ export function OrdersTable({
         <Stat label="RTO / Returns" value={String(summary.rto)} tone={summary.rto ? "bad" : undefined} />
         <Stat label="COD in transit" value={rs(summary.codPending)} hint="New + dispatched COD" />
       </div>
+
+      {/* Copy every tracking ID in this filter */}
+      {trackingIds.length > 0 && (
+        <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1 px-1">
+          <span className="text-xs text-stone-500">
+            {trackingIds.length} of {total} order{total === 1 ? "" : "s"} in this filter {trackingIds.length === 1 ? "has" : "have"} a tracking ID
+          </span>
+          <button
+            type="button"
+            onClick={() => copyTracking(trackingIds, "")}
+            className="flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-sm font-medium text-stone-700 ring-1 ring-stone-300 hover:bg-stone-50"
+          >
+            <svg viewBox="0 0 24 24" className="size-4" fill="currentColor" aria-hidden>
+              <path d="M8 3h11a2 2 0 0 1 2 2v11h-2V5H8V3ZM4 7h11a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Zm0 2v11h11V9H4Z" />
+            </svg>
+            Copy {trackingIds.length} tracking ID{trackingIds.length === 1 ? "" : "s"}
+          </button>
+        </div>
+      )}
 
       {rows.length === 0 ? (
         <div className="rounded-xl bg-white p-10 text-center text-sm text-stone-500 ring-1 ring-stone-200">
@@ -121,7 +158,10 @@ export function OrdersTable({
                         </td>
                         <td className="px-3 py-2.5">
                           <button onClick={() => setExpanded(isOpen ? null : o.id)} className="text-left">
-                            <div className="font-medium text-stone-900">{o.order_code}</div>
+                            <div className="font-medium text-stone-900">
+                              {o.order_code}
+                              {o.taken_by === "owner" && <ByMe />}
+                            </div>
                             <div className="text-xs text-stone-500">{dmy(o.order_date)}</div>
                           </button>
                         </td>
@@ -192,7 +232,8 @@ export function OrdersTable({
                         <span className={`shrink-0 font-semibold ${o.profit < 0 ? "text-red-600" : ""}`}>{rs(o.order_value)}</span>
                       </div>
                       <div className="mt-0.5 text-xs text-stone-500">
-                        {o.order_code} · {dmy(o.order_date)} · {o.phone}
+                        {o.order_code}
+                        {o.taken_by === "owner" && <ByMe />} · {dmy(o.order_date)} · {o.phone}
                       </div>
                       <div className="mt-1 text-sm text-stone-700">
                         {orderItemsLabel(o)}
@@ -236,6 +277,12 @@ export function OrdersTable({
             >
               Print labels
             </a>
+            <BulkButton
+              disabled={pending}
+              onClick={() => copyTracking(visibleSelected.map((o) => o.tracking_id).filter(Boolean) as string[], " (selected orders)")}
+            >
+              Copy tracking IDs
+            </BulkButton>
             <BulkButton disabled={pending} onClick={() => setDateOpen(true)}>
               Change date
             </BulkButton>
@@ -250,6 +297,12 @@ export function OrdersTable({
             </BulkButton>
             <BulkButton disabled={pending} onClick={() => changeStatus(visibleSelected.map((o) => o.id), "cancelled")}>
               Cancel
+            </BulkButton>
+            <BulkButton disabled={pending} onClick={() => changeTakenBy(visibleSelected.map((o) => o.id), "owner")}>
+              Taken by me
+            </BulkButton>
+            <BulkButton disabled={pending} onClick={() => changeTakenBy(visibleSelected.map((o) => o.id), "staff")}>
+              Taken by staff
             </BulkButton>
             <button onClick={() => setSelected(new Set())} className="ml-auto text-sm text-stone-500 hover:text-stone-800">
               Clear
@@ -884,5 +937,14 @@ function TrackingDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+/** Small tag for orders you took yourself (they don't count for staff pay). */
+function ByMe() {
+  return (
+    <span className="ml-1.5 rounded bg-stone-200 px-1.5 py-0.5 align-middle text-[10px] font-semibold text-stone-600" title="Taken by you: not counted in staff pay">
+      BY ME
+    </span>
   );
 }

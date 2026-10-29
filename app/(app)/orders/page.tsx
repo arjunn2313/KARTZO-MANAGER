@@ -7,6 +7,7 @@ import { STATUSES, type OrderRow } from "@/lib/orders";
 import { requestToday } from "@/lib/today";
 import { OrdersFilters } from "./orders-filters";
 import { OrdersTable } from "./orders-table";
+import { StatusByTracking } from "./status-by-tracking";
 import type { EditCourier } from "./edit-order-dialog";
 
 const DEFAULT_SIZE = 50;
@@ -21,12 +22,15 @@ export default function OrdersPage({ searchParams }: { searchParams: Promise<Sea
           <h1 className="text-2xl font-semibold tracking-tight">Orders</h1>
           <p className="mt-1 text-sm text-stone-500">Tick orders to change status or add tracking IDs in one go.</p>
         </div>
-        <Link
-          href="/orders/new"
-          className="shrink-0 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800"
-        >
-          + Add order
-        </Link>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <StatusByTracking />
+          <Link
+            href="/orders/new"
+            className="shrink-0 rounded-lg bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800"
+          >
+            + Add order
+          </Link>
+        </div>
       </div>
       <Suspense fallback={<OrdersSkeleton />}>
         <Orders searchParams={searchParams} />
@@ -57,7 +61,7 @@ function datePresets(today: string) {
 }
 
 const LIST_COLUMNS =
-  "id, order_code, order_date, dispatch_date, customer_name, phone, address, pincode, qty, order_type, payment_mode, order_value, advance_paid, cod_balance, tracking_id, status, profit, shipping_cost, cod_fee, product_cost, rto_charge, damaged, refund_amount, return_shipping, notes, product_id, courier_id, items_cost, product:products(name), courier:couriers(name), items:order_items(product_id, qty, unit_cost, unit_price, product:products(name))";
+  "id, order_code, order_date, dispatch_date, customer_name, phone, address, pincode, qty, order_type, payment_mode, order_value, advance_paid, cod_balance, tracking_id, status, profit, shipping_cost, cod_fee, product_cost, rto_charge, damaged, refund_amount, return_shipping, notes, product_id, courier_id, items_cost, taken_by, product:products(name), courier:couriers(name), items:order_items(product_id, qty, unit_cost, unit_price, product:products(name))";
 
 async function Orders({ searchParams }: { searchParams: Promise<Search> }) {
   const sp = await searchParams;
@@ -121,9 +125,30 @@ async function Orders({ searchParams }: { searchParams: Promise<Search> }) {
     supabase.from("couriers").select("id, name, default_shipping_cost, shipping_cost_outside, default_rto_charge, cod_fee_slabs").order("name"),
   ]);
 
-  if (list.error) return <p className="text-sm text-red-600">{list.error.message}</p>;
+  if (list.error)
+    return (
+      <p className="rounded-xl bg-amber-50 p-5 text-sm text-amber-900 ring-1 ring-amber-200">
+        {list.error.message.includes("taken_by")
+          ? "One-time database update needed: open DATABASE-UPDATE-13.sql, paste it into Supabase → SQL Editor and click Run. Then refresh this page."
+          : list.error.message}
+      </p>
+    );
 
   const rows = (list.data ?? []) as unknown as OrderRow[];
+
+  // every tracking ID in this filter (all pages), same order as the list, for "Copy tracking IDs"
+  const trackingIds: string[] = [];
+  for (let i = 0; i < 20; i++) {
+    let tq = base("tracking_id").not("tracking_id", "is", null);
+    if (status) tq = tq.eq("status", status);
+    const { data } = await tq
+      .order("order_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .range(i * 1000, i * 1000 + 999);
+    const chunk = ((data ?? []) as unknown as { tracking_id: string | null }[]).map((r) => r.tracking_id).filter(Boolean) as string[];
+    trackingIds.push(...chunk);
+    if (!data || data.length < 1000) break;
+  }
   const count = list.count ?? rows.length;
 
   type T = { status: string; order_value: number; profit: number; cod_balance: number; payment_mode: string };
@@ -159,6 +184,7 @@ async function Orders({ searchParams }: { searchParams: Promise<Search> }) {
         page={page}
         pageCount={Math.max(1, Math.ceil(count / PAGE_SIZE))}
         pageSize={PAGE_SIZE}
+        trackingIds={trackingIds}
         total={count}
       />
     </div>

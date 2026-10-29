@@ -54,7 +54,10 @@ async function takenCodes(supabase: Supabase, codes: string[], exceptId?: string
   return (data ?? []).map((r) => r.order_code as string);
 }
 
+const takenBy = z.enum(["staff", "owner"]).optional().default("staff");
+
 function friendly(message: string): { message: string; field?: string } {
+  if (message.includes("taken_by")) return { message: "Run DATABASE-UPDATE-13.sql in Supabase first" };
   if (message.includes("orders_order_code_key"))
     return { message: "This order ID is already used on another order", field: "order_code" };
   if (message.includes("orders_tracking_id_key"))
@@ -105,6 +108,7 @@ const orderSchema = z
     tracking_id: optionalText(40).transform((v) => (v ? v.toUpperCase() : v)),
     status: z.enum(["new", "dispatched"]),
     notes: optionalText(500),
+    taken_by: takenBy,
   })
   .refine((o) => o.advance_paid <= o.order_value, {
     message: "Advance can't be more than the order value",
@@ -158,6 +162,14 @@ const bulkRowSchema = z
     kind: z.enum(["cod", "paid", "replacement"]),
     order_value: z.number().int().min(0),
     advance_paid: z.number().int().min(0),
+    tracking_id: z
+      .string()
+      .trim()
+      .toUpperCase()
+      .refine((v) => v === "" || /^[A-Z0-9-]{6,25}$/.test(v), "Check the tracking ID")
+      .optional()
+      .default(""),
+    taken_by: takenBy,
   })
   .refine((r) => r.advance_paid <= r.order_value, { message: "Advance more than value", path: ["advance_paid"] });
 
@@ -166,6 +178,8 @@ const bulkSchema = z.object({
   first_code: orderCode.optional(),
   courier_id: z.uuid("Choose a courier"),
   status: z.enum(["new", "dispatched"]),
+  /** orders that came with a tracking ID are saved as Dispatched */
+  tracked_dispatched: z.boolean().optional().default(true),
   rows: z.array(bulkRowSchema).min(1, "Nothing to save").max(300),
 });
 
@@ -184,7 +198,20 @@ export async function createOrdersBulk(input: BulkCreateInput): Promise<BulkCrea
       row: rowIdx,
     };
   }
-  const { order_date, first_code, courier_id, status, rows } = parsed.data;
+  const { order_date, first_code, courier_id, status, tracked_dispatched, rows } = parsed.data;
+
+  // tracking IDs must be unique: within this paste and against saved orders
+  const tracks = rows.map((r) => r.tracking_id).filter(Boolean);
+  const dupInPaste = tracks.find((t, i) => tracks.indexOf(t) !== i);
+  if (dupInPaste) return { ok: false, message: `Tracking ID ${dupInPaste} is on two orders in this paste` };
+  if (tracks.length) {
+    const { data: used } = await supabase.from("orders").select("tracking_id, order_code").in("tracking_id", tracks);
+    if (used?.length)
+      return {
+        ok: false,
+        message: `Tracking ID already used: ${used.map((u) => `${u.tracking_id} (${u.order_code})`).join(", ")}`,
+      };
+  }
 
   // Manual numbering: first order gets first_code, the next ones count up from it
   let codes: (string | null)[] = rows.map(() => null);
@@ -229,7 +256,9 @@ export async function createOrdersBulk(input: BulkCreateInput): Promise<BulkCrea
         shipping_cost: shippingFor(rates, r.pincode),
         rto_charge: rates.default_rto_charge,
         cod_fee: r.kind === "cod" ? codFeeFor(rates.cod_fee_slabs, value - advance) : 0,
-        status,
+        status: r.tracking_id && tracked_dispatched ? "dispatched" : status,
+        tracking_id: r.tracking_id || null,
+        taken_by: r.taken_by,
         items: await priceItems(supabase, r.items, mode),
       });
     }
@@ -395,6 +424,7 @@ const editSchema = z
     cod_fee: money,
     tracking_id: optionalText(40).transform((v) => (v ? v.toUpperCase() : v)),
     notes: optionalText(500),
+    taken_by: takenBy,
   })
   .refine((o) => o.advance_paid <= o.order_value, {
     message: "Advance can't be more than the order value",
@@ -436,4 +466,70 @@ export async function setOrderDates(ids: string[], date: string): Promise<BulkRe
   refresh();
   const n = idsParsed.data.length;
   return { ok: true, message: `Date changed on ${n} order${n > 1 ? "s" : ""}` };
+}
+
+/* ---------------- Status by tracking IDs ---------------- */
+
+export type TrackedOrder = {
+  id: string;
+  order_code: string;
+  customer_name: string;
+  tracking_id: string;
+  status: string;
+  payment_mode: string;
+  cod_balance: number;
+  order_date: string;
+};
+
+/** Looks up orders by a pasted list of tracking IDs. */
+export async function findOrdersByTracking(ids: string[]): Promise<{ ok: true; orders: TrackedOrder[] } | { ok: false; message: string }> {
+  const supabase = await requireUser();
+  const parsed = z.array(z.string().trim().toUpperCase().min(4).max(40)).min(1, "Paste at least one tracking ID").max(1000).safeParse(ids);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Check the tracking IDs" };
+  const unique = [...new Set(parsed.data)];
+  const found: TrackedOrder[] = [];
+  for (let i = 0; i < unique.length; i += 200) {
+    const { data, error } = await supabase
+      .from("orders")
+      .select("id, order_code, customer_name, tracking_id, status, payment_mode, cod_balance, order_date")
+      .in("tracking_id", unique.slice(i, i + 200));
+    if (error) return { ok: false, message: error.message };
+    found.push(...((data ?? []) as TrackedOrder[]));
+  }
+  return { ok: true, orders: found };
+}
+
+const byTrackingSchema = z.object({
+  ids: idsSchema,
+  status: z.enum(["dispatched", "delivered", "rto"]),
+  damaged: z.boolean().optional().default(false),
+});
+
+/** Changes many orders at once (found by tracking ID). RTO can mark the products as damaged. */
+export async function setStatusForOrders(input: z.input<typeof byTrackingSchema>): Promise<BulkResult> {
+  const parsed = byTrackingSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid selection" };
+  const { ids, status, damaged } = parsed.data;
+  const r = await updateOrderStatus(ids, status);
+  if (!r.ok) return r;
+  if (status === "rto") {
+    const supabase = await requireUser();
+    const { error } = await supabase.from("orders").update({ damaged }).in("id", ids);
+    if (error) return { ok: false, message: error.message };
+  }
+  const label = status === "delivered" ? "Delivered" : status === "rto" ? "RTO" : "Dispatched";
+  return { ok: true, message: `${ids.length} order${ids.length > 1 ? "s" : ""} marked ${label}` };
+}
+
+/** Who took these orders: staff (paid per dispatched order) or you. */
+export async function setTakenBy(ids: string[], who: "staff" | "owner"): Promise<BulkResult> {
+  const supabase = await requireUser();
+  const idsParsed = idsSchema.safeParse(ids);
+  const whoParsed = z.enum(["staff", "owner"]).safeParse(who);
+  if (!idsParsed.success || !whoParsed.success) return { ok: false, message: "Invalid selection" };
+  const { error } = await supabase.from("orders").update({ taken_by: whoParsed.data }).in("id", idsParsed.data);
+  if (error) return { ok: false, message: friendly(error.message).message };
+  refresh();
+  const n = idsParsed.data.length;
+  return { ok: true, message: `${n} order${n > 1 ? "s" : ""} marked as taken by ${whoParsed.data === "owner" ? "you" : "staff"}` };
 }

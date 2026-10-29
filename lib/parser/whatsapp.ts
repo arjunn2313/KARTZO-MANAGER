@@ -11,6 +11,9 @@
  * The "Mob:" line closes an order. Payment can be "COD: 499", "PREPAID" / "PAID", or "REPLACEMENT".
  * Quantity is optional: "Itemref: Glass Wiper x2".
  * Several products: "Itemref: CAR REAR VIEW MIRROR + Glass Wiper" (also "&", "," or "and").
+ * Tracking ID (optional), any of:
+ *   "Mob: 98... COD: 299 Itemref: Glass Wiper Track: CX064397338IN"   (same line)
+ *   "Tracking: CX064397338IN"   or just   "CX064397338IN"            (its own line, before or right after the Mob line)
  */
 
 export type ParsedOrder = {
@@ -23,8 +26,29 @@ export type ParsedOrder = {
   cod_amount: number | null;
   item: string; // full item text
   items: { text: string; qty: number }[];
+  /** courier tracking ID, "" if none was given */
+  tracking: string;
   problems: string[];
 };
+
+// "Track: X", "Tracking ID - X", "AWB X", "Consignment no: X" (the ID must contain a digit)
+const TRACK_KEYWORD =
+  /\b(?:track(?:ing)?(?:\s*(?:id|no\.?|number|#))?|awb(?:\s*no\.?)?|consignment(?:\s*no\.?)?|c\.?n\.?\s*no\.?)\s*[:.#=-]?\s*((?=[A-Z0-9-]*\d)[A-Z0-9-]{6,25})\b/i;
+// India Post article number, e.g. CX064397338IN / EK123456789IN
+const INDIA_POST = /\b([A-Z]{2}\d{9}IN)\b/i;
+
+/** Pulls a tracking ID out of a piece of text; returns the ID and the text without it. */
+export function findTracking(text: string): { id: string; rest: string } | null {
+  const m = text.match(TRACK_KEYWORD) ?? text.match(INDIA_POST);
+  if (!m) return null;
+  return { id: m[1].toUpperCase(), rest: (text.slice(0, m.index) + " " + text.slice(m.index! + m[0].length)).replace(/\s+/g, " ").trim() };
+}
+
+/** A line that holds nothing but a tracking ID (optionally with its label). */
+function trackingOnly(line: string) {
+  const t = findTracking(line);
+  return t && !t.rest.replace(/[:.#=-]/g, "").trim() ? t.id : null;
+}
 
 // "[27/10/26, 8:03 am] Kartzo: " or "27/10/2026, 08:03 - Kartzo: " added when copying several messages
 const WA_PREFIX = /^\s*\[?\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4},?\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\.?\s?m\.?)?\]?\s*(?:-\s*)?[^:\n]{1,40}:\s*/i;
@@ -39,12 +63,24 @@ export function parseWhatsAppOrders(text: string): ParsedOrder[] {
 
   const orders: ParsedOrder[] = [];
   let buffer: string[] = [];
+  let pendingTracking = "";
 
   for (const line of lines) {
     if (!line) continue;
+    const t = MOB_LINE.test(line) ? null : trackingOnly(line);
+    if (t) {
+      // right after a Mob line → belongs to the order just closed; otherwise to the order being read
+      const last = orders[orders.length - 1];
+      if (!buffer.length && last && !last.tracking) last.tracking = t;
+      else pendingTracking = t;
+      continue;
+    }
     if (MOB_LINE.test(line)) {
-      orders.push(buildOrder(buffer, line));
+      const o = buildOrder(buffer, line);
+      if (!o.tracking && pendingTracking) o.tracking = pendingTracking;
+      orders.push(o);
       buffer = [];
+      pendingTracking = "";
     } else {
       buffer.push(line);
     }
@@ -53,13 +89,22 @@ export function parseWhatsAppOrders(text: string): ParsedOrder[] {
   // Leftover lines with no "Mob:" line → still show them so nothing is silently lost
   if (buffer.length) {
     const o = buildOrder(buffer, "");
+    if (pendingTracking) o.tracking = pendingTracking;
     o.problems.unshift("No “Mob:” line found");
     orders.push(o);
   }
   return orders;
 }
 
-function buildOrder(blockLines: string[], mobLine: string): ParsedOrder {
+function buildOrder(blockLines: string[], rawMobLine: string): ParsedOrder {
+  // a tracking ID on the Mob line is taken out first, so it never ends up in the product name
+  const tr = findTracking(rawMobLine.replace(/(?:\+?91[\s-]?)?[6-9](?:[\s-]?\d){9}/, " "));
+  let mobLine = rawMobLine;
+  let tracking = "";
+  if (tr) {
+    tracking = tr.id;
+    mobLine = rawMobLine.replace(new RegExp(`(?:\\b(?:track(?:ing)?(?:\\s*(?:id|no\\.?|number|#))?|awb(?:\\s*no\\.?)?|consignment(?:\\s*no\\.?)?|c\\.?n\\.?\\s*no\\.?)\\s*[:.#=-]?\\s*)?${tr.id}`, "i"), " ").replace(/\s+/g, " ").trim();
+  }
   // Drop stray header words that sometimes sit above an order
   const lines = blockLines.filter((l) => !/^(paid|prepaid|cod|replacement|orders?)\s*:?\s*$/i.test(l));
 
@@ -120,7 +165,7 @@ function buildOrder(blockLines: string[], mobLine: string): ParsedOrder {
   if (!items.length) problems.push("Item not found");
 
   return {
-    raw: [...blockLines, mobLine].filter(Boolean).join("\n"),
+    raw: [...blockLines, rawMobLine].filter(Boolean).join("\n"),
     customer_name,
     address,
     pincode,
@@ -129,6 +174,7 @@ function buildOrder(blockLines: string[], mobLine: string): ParsedOrder {
     cod_amount,
     item,
     items,
+    tracking,
     problems,
   };
 }
@@ -176,4 +222,18 @@ export function matchProduct<T extends { id: string; name: string }>(item: strin
     }
   }
   return bestScore >= 0.5 ? best : null;
+}
+
+/**
+ * A list of tracking IDs pasted in one go (one per line, or copied from a booking receipt / Excel).
+ * India Post numbers are picked out even when other text is mixed in; otherwise every code with a digit counts.
+ */
+export function extractTrackingIds(text: string): string[] {
+  const indiaPost = text.toUpperCase().match(/\b[A-Z]{2}\d{9}IN\b/g);
+  if (indiaPost?.length) return indiaPost;
+  return text
+    .toUpperCase()
+    .split(/[\s,;|]+/)
+    .map((t) => t.replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g, ""))
+    .filter((t) => /^(?=[A-Z0-9-]*\d)[A-Z0-9-]{6,25}$/.test(t) && !/^[6-9]\d{9}$/.test(t));
 }

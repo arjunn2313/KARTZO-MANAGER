@@ -48,6 +48,8 @@ export type OrderRow = {
   product_id: string;
   courier_id: string | null;
   items_cost?: number;
+  /** who took the order: staff (counts for staff pay) or the owner */
+  taken_by?: "staff" | "owner";
   items?: { product_id: string; qty: number; unit_cost: number; unit_price: number; product: { name: string } | null }[];
   product: { name: string } | null;
   courier: { name: string } | null;

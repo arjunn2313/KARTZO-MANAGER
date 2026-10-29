@@ -13,6 +13,7 @@ export function DailyTable({
   today,
   otherCosts,
   costMonths,
+  staffAutoFrom,
 }: {
   rows: DayRow[];
   products: { key: string; name: string; color: string }[];
@@ -20,7 +21,9 @@ export function DailyTable({
   /** monthly business costs taken off this range's total (not any single day) */
   otherCosts: number;
   costMonths: string[];
+  staffAutoFrom: string | null;
 }) {
+  const staffAuto = (date: string) => !!staffAutoFrom && date >= staffAutoFrom;
   const cols = 7 + products.length;
   const sorted = [...rows].sort((a, b) => (a.date < b.date ? 1 : -1));
   const sum = (f: (r: DayRow) => number) => rows.reduce((s, r) => s + f(r), 0);
@@ -85,12 +88,25 @@ export function DailyTable({
               </div>
               <div className="flex items-center justify-between gap-2">
                 Staff
-                <InputCell
-                  date={r.date}
-                  field="staff_amount"
-                  value={r.staff - r.staffBonus}
-                  other={r.adSpend}
-                />
+                {staffAuto(r.date) ? (
+                  <Link
+                    href="/staff"
+                    title="Counted from her dispatched orders"
+                    className="inline-block min-w-16 rounded-md px-2 py-1 text-right text-sm text-stone-800 hover:bg-stone-100"
+                  >
+                    {rs(r.staff - r.staffBonus)}
+                    <span className="block text-[10px] text-emerald-700">
+                      auto
+                    </span>
+                  </Link>
+                ) : (
+                  <InputCell
+                    date={r.date}
+                    field="staff_amount"
+                    value={r.staff - r.staffBonus}
+                    other={r.adSpend}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -195,12 +211,25 @@ export function DailyTable({
                   )}
                 </td>
                 <td className="px-2 py-1 text-right">
-                  <InputCell
-                    date={r.date}
-                    field="staff_amount"
-                    value={r.staff - r.staffBonus}
-                    other={r.adSpend}
-                  />
+                  {staffAuto(r.date) ? (
+                    <Link
+                      href="/staff"
+                      title="Counted from her dispatched orders"
+                      className="inline-block min-w-16 rounded-md px-2 py-1 text-right text-sm text-stone-800 hover:bg-stone-100"
+                    >
+                      {rs(r.staff - r.staffBonus)}
+                      <span className="block text-[10px] text-emerald-700">
+                        auto
+                      </span>
+                    </Link>
+                  ) : (
+                    <InputCell
+                      date={r.date}
+                      field="staff_amount"
+                      value={r.staff - r.staffBonus}
+                      other={r.adSpend}
+                    />
+                  )}
                   {r.staffBonus > 0 && (
                     <div className="mt-0.5 text-[10px] text-emerald-700">
                       +{rs(r.staffBonus)} bonus

@@ -21,6 +21,7 @@ const daySchema = z.object({
 });
 
 function friendly(m: string) {
+  if (m.includes("staff_paid_amount") || m.includes("staff_recalc")) return "Run DATABASE-UPDATE-13.sql in Supabase first";
   if (m.includes("staff_bonus") || m.includes("app_settings")) return "Run DATABASE-UPDATE-7.sql in Supabase first";
   return m;
 }
@@ -44,7 +45,7 @@ const weekSchema = z.object({
   label: z.string().max(80),
 });
 
-/** Marks every day in the week paid / unpaid. Optionally logs the payout in Expenses as cash out. */
+/** Marks the week paid / unpaid. Paying records how much each day was worth, so orders added later show up as "due". */
 export async function setWeekPaid(input: z.input<typeof weekSchema>): Promise<Result> {
   const supabase = await requireUser();
   const parsed = weekSchema.safeParse(input);
@@ -53,21 +54,40 @@ export async function setWeekPaid(input: z.input<typeof weekSchema>): Promise<Re
 
   const { data: rows, error: e1 } = await supabase.from("daily_inputs").select("*").gte("date", from).lte("date", to);
   if (e1) return { ok: false, message: e1.message };
-  const days = (rows ?? []).filter((d) => (d.staff_amount ?? 0) + (d.staff_bonus ?? 0) > 0);
+  const pay = (d: { staff_amount?: number | null; staff_bonus?: number | null }) => (d.staff_amount ?? 0) + (d.staff_bonus ?? 0);
+  const days = (rows ?? []).filter((d) => pay(d) > 0 || d.staff_paid);
   if (!days.length) return { ok: false, message: "No staff amounts in this week" };
-  const total = days.reduce((s, d) => s + (d.staff_amount ?? 0) + (d.staff_bonus ?? 0), 0);
 
-  const { error } = await supabase
-    .from("daily_inputs")
-    .update({ staff_paid: paid, staff_paid_date: paid ? todayIST() : null })
-    .in(
-      "date",
-      days.map((d) => d.date),
-    );
-  if (error) return { ok: false, message: error.message };
+  if (!paid) {
+    let { error } = await supabase
+      .from("daily_inputs")
+      .update({ staff_paid: false, staff_paid_date: null, staff_paid_amount: null })
+      .in("date", days.map((d) => d.date));
+    if (error?.message.includes("staff_paid_amount"))
+      ({ error } = await supabase.from("daily_inputs").update({ staff_paid: false, staff_paid_date: null }).in("date", days.map((d) => d.date)));
+    if (error) return { ok: false, message: error.message };
+    refresh();
+    return { ok: true, message: "Marked as not paid" };
+  }
+
+  // only what hasn't been paid yet (days paid earlier may have grown since)
+  const due = (d: (typeof days)[number]) => (d.staff_paid ? Math.max(0, pay(d) - (d.staff_paid_amount ?? pay(d))) : pay(d));
+  const total = days.reduce((s, d) => s + due(d), 0);
+  if (total <= 0) return { ok: false, message: "Nothing due for this week" };
+
+  for (const d of days) {
+    if (pay(d) <= 0) continue;
+    let { error } = await supabase
+      .from("daily_inputs")
+      .update({ staff_paid: true, staff_paid_date: todayIST(), staff_paid_amount: pay(d) })
+      .eq("date", d.date);
+    if (error?.message.includes("staff_paid_amount"))
+      ({ error } = await supabase.from("daily_inputs").update({ staff_paid: true, staff_paid_date: todayIST() }).eq("date", d.date));
+    if (error) return { ok: false, message: error.message };
+  }
 
   let note = "";
-  if (paid && recordExpense) {
+  if (recordExpense) {
     // Staff pay is already in net profit (Dashboard), so this is "cash out", not a business cost
     let { data: cat } = await supabase.from("expense_categories").select("id").eq("name", "Staff salary").maybeSingle();
     if (!cat) {
@@ -83,7 +103,45 @@ export async function setWeekPaid(input: z.input<typeof weekSchema>): Promise<Re
   }
 
   refresh();
-  return { ok: true, message: paid ? `₹${total.toLocaleString("en-IN")} marked paid${note}` : "Marked as not paid" };
+  return { ok: true, message: `₹${total.toLocaleString("en-IN")} marked paid${note}` };
+}
+
+const paySchema = z.object({
+  rate: z.number({ error: "Enter an amount" }).int("Whole rupees only").min(0).max(10_000),
+  auto_from: z.iso.date("Pick a date"),
+});
+
+/**
+ * Per-order pay settings. A new rate applies from today (paid weeks stay as they were);
+ * moving the start date earlier recounts those days from the orders.
+ */
+export async function setStaffPay(input: z.input<typeof paySchema>): Promise<Result> {
+  const supabase = await requireUser();
+  const parsed = paySchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Check the values" };
+  const today = todayIST();
+  if (parsed.data.auto_from > today) return { ok: false, message: "Start date can't be in the future" };
+
+  const { data: old } = await supabase.from("app_settings").select("key, value").in("key", ["staff_rate", "staff_auto_from"]);
+  const kv = Object.fromEntries((old ?? []).map((r) => [r.key, r.value]));
+  const { error } = await supabase.from("app_settings").upsert(
+    [
+      { key: "staff_rate", value: String(parsed.data.rate) },
+      { key: "staff_auto_from", value: parsed.data.auto_from },
+    ],
+    { onConflict: "key" },
+  );
+  if (error) return { ok: false, message: friendly(error.message) };
+
+  const rateChanged = kv.staff_rate !== String(parsed.data.rate);
+  const startMoved = kv.staff_auto_from !== parsed.data.auto_from;
+  const recountFrom = startMoved && (!kv.staff_auto_from || parsed.data.auto_from < kv.staff_auto_from) ? parsed.data.auto_from : rateChanged ? today : null;
+  if (recountFrom) {
+    const { error: e2 } = await supabase.rpc("staff_recalc_range", { a: recountFrom > parsed.data.auto_from ? recountFrom : parsed.data.auto_from, b: today });
+    if (e2) return { ok: false, message: e2.message.includes("staff_recalc") ? "Run DATABASE-UPDATE-13.sql in Supabase first" : e2.message };
+  }
+  refresh();
+  return { ok: true, message: "Staff pay settings saved" };
 }
 
 const settingsSchema = z.object({
@@ -114,4 +172,16 @@ export async function saveStaffName(name: string): Promise<Result> {
   if (error) return { ok: false, message: friendly(error.message) };
   refresh();
   return { ok: true, message: "Name saved" };
+}
+
+/** Makes a new secret staff link (the old one stops working), or switches the link off. */
+export async function changeStaffLink(mode: "new" | "off"): Promise<Result & { token?: string }> {
+  const supabase = await requireUser();
+  const token = mode === "new" ? crypto.randomUUID().replaceAll("-", "") : "";
+  const { error } = await supabase.from("app_settings").upsert([{ key: "staff_link_token", value: token }], { onConflict: "key" });
+  if (error) return { ok: false, message: friendly(error.message) };
+  refresh();
+  return mode === "new"
+    ? { ok: true, message: "New link made. The old link no longer works.", token }
+    : { ok: true, message: "Staff link switched off" };
 }
