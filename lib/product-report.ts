@@ -14,7 +14,27 @@ export type ReportOrder = {
   items: { product_id: string; qty: number; unit_cost: number; unit_price: number }[] | null;
 };
 
-export type DayCost = { date: string; ad: number; staff: number };
+export type DayCost = {
+  date: string;
+  ad: number;
+  staff: number;
+  /** what each product's campaign spent that day in Ads Manager (product_id → ₹); the day's ad cost is split in this ratio */
+  adWeights?: Record<string, number>;
+};
+
+/** one product on one day */
+export type DayLine = {
+  net: number;
+  pieces: number;
+  /** orders (not cancelled) that contain this product */
+  orders: number;
+  revenue: number;
+  /** profit from the orders before ads and staff */
+  gross: number;
+  ad: number;
+  staff: number;
+  rto: number;
+};
 
 export type ProductLine = {
   id: string;
@@ -37,7 +57,7 @@ export type ProductLine = {
   netProfit: number;
   codOrders: number;
   keralaOrders: number;
-  daily: Record<string, { net: number; pieces: number }>;
+  daily: Record<string, DayLine>;
 };
 
 const SOLD = new Set(["new", "dispatched", "delivered"]);
@@ -74,7 +94,7 @@ export function productReport(
         netProfit: 0,
         codOrders: 0,
         keralaOrders: 0,
-        daily: Object.fromEntries(days.map((d) => [d, { net: 0, pieces: 0 }])),
+        daily: Object.fromEntries(days.map((d) => [d, { net: 0, pieces: 0, orders: 0, revenue: 0, gross: 0, ad: 0, staff: 0, rto: 0 }])),
       };
       lines.set(id, l);
     }
@@ -112,43 +132,84 @@ export function productReport(
         l.productCost += it.cost;
         l.shipping += o.shipping_cost * it.share;
         l.codFees += o.cod_fee * it.share;
-        if (l.daily[o.order_date]) l.daily[o.order_date].pieces += it.qty;
+        if (l.daily[o.order_date]) {
+          l.daily[o.order_date].pieces += it.qty;
+          l.daily[o.order_date].revenue += o.order_value * it.share;
+        }
       } else if (LOSS.has(o.status)) {
         l.rtoCount += 1;
         l.rtoLoss += o.profit * it.share;
+        if (l.daily[o.order_date]) l.daily[o.order_date].rto += 1;
       }
-      if (l.daily[o.order_date]) l.daily[o.order_date].net += o.profit * it.share;
+      if (l.daily[o.order_date]) {
+        l.daily[o.order_date].net += o.profit * it.share;
+        l.daily[o.order_date].gross += o.profit * it.share;
+        l.daily[o.order_date].orders += 1;
+      }
       const w = dayWeight.get(o.order_date) ?? new Map<string, number>();
       w.set(pid, (w.get(pid) ?? 0) + it.share);
       dayWeight.set(o.order_date, w);
     }
   }
 
-  // split each day's ad spend + staff by that day's order share
+  // split each day's ad spend: by the campaign numbers you typed for that day, otherwise by that day's order share.
+  // staff is always split by order share.
   let unallocatedAds = 0;
   let unallocatedStaff = 0;
+  let campaignDays = 0;
+  let campaignAds = 0;
+  const campaignDates: string[] = [];
   for (const c of costs) {
     if (c.date < from || c.date > to) continue;
     const w = dayWeight.get(c.date);
     const total = w ? [...w.values()].reduce((a, b) => a + b, 0) : 0;
-    if (!w || total === 0) {
-      unallocatedAds += c.ad;
-      unallocatedStaff += c.staff;
-      continue;
-    }
-    for (const [pid, share] of w) {
-      const l = line(pid);
-      const ad = (c.ad * share) / total;
-      const st = (c.staff * share) / total;
-      l.adSpend += ad;
-      l.staff += st;
-      if (l.daily[c.date]) l.daily[c.date].net -= ad + st;
-    }
+    const aw = c.adWeights ?? {};
+    const awTotal = Object.values(aw).reduce((a, b) => a + b, 0);
+
+    if (awTotal > 0) {
+      campaignDates.push(c.date);
+      if (c.ad > 0) {
+        campaignDays += 1;
+        campaignAds += c.ad;
+      }
+      for (const [pid, v] of Object.entries(aw)) {
+        if (!v) continue;
+        const l = line(pid);
+        const ad = (c.ad * v) / awTotal;
+        l.adSpend += ad;
+        if (l.daily[c.date]) {
+          l.daily[c.date].net -= ad;
+          l.daily[c.date].ad += ad;
+        }
+      }
+    } else if (total > 0 && w) {
+      for (const [pid, share] of w) {
+        const l = line(pid);
+        const ad = (c.ad * share) / total;
+        l.adSpend += ad;
+        if (l.daily[c.date]) {
+          l.daily[c.date].net -= ad;
+          l.daily[c.date].ad += ad;
+        }
+      }
+    } else unallocatedAds += c.ad;
+
+    if (total > 0 && w) {
+      for (const [pid, share] of w) {
+        const l = line(pid);
+        const st = (c.staff * share) / total;
+        l.staff += st;
+        if (l.daily[c.date]) {
+          l.daily[c.date].net -= st;
+          l.daily[c.date].staff += st;
+        }
+      }
+    } else unallocatedStaff += c.staff;
   }
 
   const list = [...lines.values()].map((l) => ({ ...l, netProfit: l.grossProfit - l.adSpend - l.staff }));
   list.sort((a, b) => b.netProfit - a.netProfit);
-  return { lines: list, unallocatedAds, unallocatedStaff, days };
+  return { lines: list, unallocatedAds, unallocatedStaff, days, campaignDays, campaignAds, campaignDates };
 }
 
 /** Handy per-product ratios. */

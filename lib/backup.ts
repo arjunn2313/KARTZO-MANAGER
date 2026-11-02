@@ -2,6 +2,7 @@ import "server-only";
 import ExcelJS from "exceljs";
 import { spendByDay } from "./ad-wallet";
 import { loadWallet } from "./ad-wallet-data";
+import { loadAdWeights } from "./day-costs";
 import { aggregateDays, eachDay, shiftDays, totals, type DailyInput, type DashOrder } from "./dashboard";
 import { STATUS_LABEL, type OrderStatus } from "./orders";
 import { productReport, ratios, type ReportOrder } from "./product-report";
@@ -147,7 +148,8 @@ export async function buildBackup(supabase: Supabase, month: string, today: stri
   const days = aggregateDays(orders as unknown as DashOrder[], inputs, from, to);
   const t = totals(orders as unknown as DashOrder[], days, otherCosts);
 
-  const dayCosts = days.map((d) => ({ date: d.date, ad: d.adSpend, staff: d.staff }));
+  const adWeights = await loadAdWeights(supabase, from, to);
+  const dayCosts = days.map((d) => ({ date: d.date, ad: d.adSpend, staff: d.staff, adWeights: adWeights.get(d.date) }));
   const report = productReport(orders as unknown as ReportOrder[], dayCosts, productList, from, to);
 
   const wb = new ExcelJS.Workbook();

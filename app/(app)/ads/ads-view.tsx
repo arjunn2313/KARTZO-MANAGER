@@ -18,6 +18,7 @@ import {
   setAdGst,
   type Result,
 } from "./actions";
+import { ProductSpendCard, type ProductSpend } from "./product-spend";
 
 const rs = (n: number) =>
   (n < 0 ? "−" : "") + "₹" + Math.abs(Math.round(n)).toLocaleString("en-IN");
@@ -39,6 +40,8 @@ export function AdsView({
   recharges,
   periods,
   gst,
+  products,
+  productSpend,
 }: {
   today: string;
   all: boolean;
@@ -46,6 +49,8 @@ export function AdsView({
   recharges: Recharge[];
   periods: Period[];
   gst: number;
+  products: { id: string; name: string; active: boolean }[];
+  productSpend: ProductSpend[] | null;
 }) {
   const [toast, setToast] = useState<Result | null>(null);
   const [pending, startTransition] = useTransition();
@@ -162,6 +167,8 @@ export function AdsView({
           </label>
         </section>
       </div>
+
+      <ProductSpendCard today={today} products={products} entries={productSpend} walletCost={byDay} pending={pending} run={run} />
 
       {/* Spend history */}
       <section className="rounded-2xl bg-white ring-1 ring-stone-200">

@@ -258,6 +258,13 @@ async function Dashboard({
         </div>
       </header>
 
+      <Link
+        href={`${base}/order`}
+        className="flex items-center justify-center gap-2 rounded-2xl bg-stone-900 py-3.5 text-base font-semibold text-white shadow-sm active:scale-[0.99]"
+      >
+        <span className="text-xl leading-none">+</span> New order
+      </Link>
+
       {/* period filter */}
       <nav className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4">
         {[null, ...months].map((m) => {

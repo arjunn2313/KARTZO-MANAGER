@@ -3,7 +3,10 @@
 import { refresh } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
+import { shiftDays } from "@/lib/dashboard";
 import { bumpCode } from "@/lib/orders";
+import { lookupPincode } from "@/lib/pincode";
+import { quickOrderSchema, type PhoneOrder, type QuickOrderInput, type QuickOrderResult } from "@/lib/quick-order";
 import { codFeeFor, parseSlabs, shippingFor } from "@/lib/shipping";
 import { isValidPhone, isValidPin, normalizePhone, normalizePin, todayIST } from "@/lib/validation";
 
@@ -532,4 +535,74 @@ export async function setTakenBy(ids: string[], who: "staff" | "owner"): Promise
   refresh();
   const n = idsParsed.data.length;
   return { ok: true, message: `${n} order${n > 1 ? "s" : ""} marked as taken by ${whoParsed.data === "owner" ? "you" : "staff"}` };
+}
+
+/* ---------------- Smart order form (same form as the staff link) ---------------- */
+
+/** Saves one order from the smart order form, by you (or for your staff). */
+export async function createQuickOrder(input: QuickOrderInput): Promise<QuickOrderResult> {
+  const supabase = await requireUser();
+  const parsed = quickOrderSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Check the order" };
+  const o = parsed.data;
+  if (!lookupPincode(o.pincode)) return { ok: false, message: "This pincode doesn't exist. Ask the customer again." };
+  if (!o.courier_id) return { ok: false, message: "Choose a courier" };
+
+  const { data: courier, error: cErr } = await supabase
+    .from("couriers")
+    .select("default_shipping_cost, shipping_cost_outside, default_rto_charge, cod_fee_slabs")
+    .eq("id", o.courier_id)
+    .single();
+  if (cErr) return { ok: false, message: cErr.message };
+  const rates = { ...courier, cod_fee_slabs: parseSlabs(courier.cod_fee_slabs) };
+
+  const replacement = o.order_type === "replacement";
+  const mode = replacement ? "paid" : o.payment_mode;
+  const value = replacement ? 0 : o.order_value;
+  const advance = replacement ? 0 : mode === "paid" ? value : o.advance_paid;
+  try {
+    const items = (await priceItems(supabase, o.items, mode)).map((i) => (replacement ? { ...i, unit_price: 0 } : i));
+    const { data, error } = await supabase.rpc("create_orders", {
+      payload: [
+        {
+          order_date: todayIST(),
+          customer_name: o.customer_name.toUpperCase(),
+          phone: o.phone,
+          address: o.address.toUpperCase(),
+          pincode: o.pincode,
+          order_type: o.order_type,
+          payment_mode: mode,
+          order_value: value,
+          advance_paid: advance,
+          courier_id: o.courier_id,
+          shipping_cost: shippingFor(rates, o.pincode),
+          rto_charge: rates.default_rto_charge,
+          cod_fee: mode === "cod" ? codFeeFor(rates.cod_fee_slabs, value - advance) : 0,
+          status: "new",
+          notes: o.notes || null,
+          taken_by: o.taken_by ?? "owner",
+          items,
+        },
+      ],
+    });
+    if (error) return { ok: false, message: friendly(error.message).message };
+    refresh();
+    return { ok: true, code: (data as string[])[0] };
+  } catch (e) {
+    return { ok: false, message: (e as Error).message };
+  }
+}
+
+/** Earlier orders from this phone (last 30 days), for the smart order form. */
+export async function phoneOrdersForForm(phone: string): Promise<PhoneOrder[]> {
+  const supabase = await requireUser();
+  if (!isValidPhone(phone)) return [];
+  const { data } = await supabase
+    .from("orders")
+    .select("order_code, order_date, status")
+    .eq("phone", phone)
+    .gte("order_date", shiftDays(todayIST(), -30))
+    .order("order_date", { ascending: false })
+    .limit(5);
+  return (data ?? []).map((r) => ({ code: r.order_code, date: r.order_date, status: r.status }));
 }

@@ -24,7 +24,7 @@ export function ProductReportView({
   lines: ProductLine[];
   images: Record<string, string | null>;
   colorOrder: string[];
-  unallocated: { ads: number; staff: number };
+  unallocated: { ads: number; staff: number; campaignDays?: number; campaignAds?: number };
   days: string[];
 }) {
   const color = (id: string) => CHART.series[Math.max(0, colorOrder.indexOf(id)) % CHART.series.length];
@@ -49,10 +49,16 @@ export function ProductReportView({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Product report</h1>
           <p className="mt-1 max-w-2xl text-sm text-stone-500">
-            What each product really earns after product cost, shipping, COD fees, RTO, ads and staff. Ads and staff are shared out each day by how many of
-            that day&apos;s orders each product brought in.
+            What each product really earns after product cost, shipping, COD fees, RTO, ads and staff. Ads use each campaign&apos;s spend where you typed it on
+            the Ad wallet page (otherwise each product&apos;s share of the day&apos;s orders); staff is shared by orders.
           </p>
         </div>
+        <Link
+          href="/reports/products/daily"
+          className="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-800"
+        >
+          Day by day profit / loss →
+        </Link>
       </div>
       {rangeBar}
 
@@ -92,8 +98,8 @@ export function ProductReportView({
           <CompareTable lines={lines} color={color} />
 
           <p className="text-xs text-stone-500">
-            Other expenses (packing, rent…) are a monthly cost and aren&apos;t split by product. Orders with two different products share their price, shipping and
-            ads by each product&apos;s value in the order.
+            Other expenses (packing, rent…) are a monthly cost and aren&apos;t split by product. Ad spend uses each product&apos;s campaign spend where you typed it on the Ad wallet page, otherwise
+            each product&apos;s share of that day&apos;s orders. Orders with two different products share their price and shipping by each product&apos;s value.
           </p>
         </>
       )}
@@ -103,7 +109,7 @@ export function ProductReportView({
 
 /* ---------------- what stands out ---------------- */
 
-function Insights({ lines, unallocated }: { lines: ProductLine[]; unallocated: { ads: number; staff: number } }) {
+function Insights({ lines, unallocated }: { lines: ProductLine[]; unallocated: { ads: number; staff: number; campaignDays?: number; campaignAds?: number } }) {
   const notes: { tone: "good" | "bad" | "info"; text: React.ReactNode }[] = [];
   const withSales = lines.filter((l) => l.orders > 0);
   const best = withSales[0];
@@ -133,16 +139,41 @@ function Insights({ lines, unallocated }: { lines: ProductLine[]; unallocated: {
     if (l.orders >= 5 && r.rtoRate >= 0.15)
       notes.push({ tone: "bad", text: <>{l.name} has {pct(r.rtoRate)} RTO / returns ({l.rtoCount} of {l.orders} orders), costing {rs(-l.rtoLoss)}.</> });
   }
+  for (const l of lines)
+    if (l.orders === 0 && l.adSpend > 0)
+      notes.push({ tone: "bad", text: <>{l.name}: {rs(l.adSpend)} spent on its campaign but no orders yet.</> });
   if (unallocated.ads > 0)
     notes.push({ tone: "info", text: <>{rs(unallocated.ads)} of ad spend fell on days with no orders, so it isn&apos;t in any product. It still counts on the Dashboard.</> });
 
-  if (!notes.length) return null;
+  const sourceNote: (typeof notes)[number] =
+    unallocated.campaignDays
+      ? {
+          tone: "info",
+          text: (
+            <>
+              Ad spend per product uses your campaign numbers on {unallocated.campaignDays} day{unallocated.campaignDays === 1 ? "" : "s"} (
+              {rs(unallocated.campaignAds ?? 0)}); other days are split by orders.
+            </>
+          ),
+        }
+      : {
+          tone: "info",
+          text: (
+            <>
+              Ad spend is split by each product&apos;s orders. For exact numbers, type each campaign&apos;s spend on the{" "}
+              <a href="/ads" className="font-medium text-emerald-700 underline">
+                Ad wallet
+              </a>{" "}
+              page.
+            </>
+          ),
+        };
   const dot = { good: "bg-emerald-500", bad: "bg-red-500", info: "bg-sky-500" };
   return (
     <section className="rounded-2xl bg-white p-5 ring-1 ring-stone-200">
       <h2 className="font-semibold">What stands out</h2>
       <ul className="mt-3 space-y-2 text-sm text-stone-700">
-        {notes.slice(0, 6).map((n, i) => (
+        {[...notes.slice(0, 6), sourceNote].map((n, i) => (
           <li key={i} className="flex gap-2.5">
             <span className={`mt-1.5 size-2 shrink-0 rounded-full ${dot[n.tone]}`} aria-hidden />
             <span>{n.text}</span>

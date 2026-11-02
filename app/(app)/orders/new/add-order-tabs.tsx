@@ -1,11 +1,14 @@
 "use client";
 
 import { useState } from "react";
+import { QuickOrderForm } from "@/components/quick-order/quick-order-form";
+import { createQuickOrder, phoneOrdersForForm } from "../actions";
 import { OrderForm, type CourierOption, type ProductOption } from "./order-form";
 import { PasteOrders } from "./paste-orders";
 
-export function AddOrderTabs(props: { products: ProductOption[]; couriers: CourierOption[]; today: string; staffName: string }) {
-  const [tab, setTab] = useState<"paste" | "single">("paste");
+export function AddOrderTabs(props: { products: ProductOption[]; couriers: CourierOption[]; today: string; staffName: string; business: string }) {
+  const [tab, setTab] = useState<"smart" | "paste" | "single">("smart");
+  const indiaPostFirst = [...props.couriers].sort((a, b) => Number(/india\s*post/i.test(b.name)) - Number(/india\s*post/i.test(a.name)));
 
   if (props.products.length === 0 || props.couriers.length === 0) {
     return (
@@ -20,6 +23,7 @@ export function AddOrderTabs(props: { products: ProductOption[]; couriers: Couri
       <div className="inline-flex rounded-lg bg-stone-200/70 p-1">
         {(
           [
+            ["smart", "Smart order"],
             ["paste", "Paste from WhatsApp"],
             ["single", "Single order"],
           ] as const
@@ -35,7 +39,23 @@ export function AddOrderTabs(props: { products: ProductOption[]; couriers: Couri
           </button>
         ))}
       </div>
-      {tab === "paste" ? <PasteOrders {...props} /> : <OrderForm {...props} />}
+      {tab === "smart" ? (
+        <div className="max-w-lg">
+          <QuickOrderForm
+            products={props.products}
+            couriers={indiaPostFirst.map((c) => ({ id: c.id, name: c.name }))}
+            business={props.business}
+            create={createQuickOrder}
+            phoneOrders={phoneOrdersForForm}
+            takenBy={{ staffName: props.staffName }}
+            floatingSave={false}
+          />
+        </div>
+      ) : tab === "paste" ? (
+        <PasteOrders {...props} />
+      ) : (
+        <OrderForm {...props} />
+      )}
     </div>
   );
 }

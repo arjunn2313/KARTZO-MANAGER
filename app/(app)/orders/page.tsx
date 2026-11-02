@@ -61,7 +61,7 @@ function datePresets(today: string) {
 }
 
 const LIST_COLUMNS =
-  "id, order_code, order_date, dispatch_date, customer_name, phone, address, pincode, qty, order_type, payment_mode, order_value, advance_paid, cod_balance, tracking_id, status, profit, shipping_cost, cod_fee, product_cost, rto_charge, damaged, refund_amount, return_shipping, notes, product_id, courier_id, items_cost, taken_by, product:products(name), courier:couriers(name), items:order_items(product_id, qty, unit_cost, unit_price, product:products(name))";
+  "id, order_code, order_date, created_at, dispatch_date, customer_name, phone, address, pincode, qty, order_type, payment_mode, order_value, advance_paid, cod_balance, tracking_id, status, profit, shipping_cost, cod_fee, product_cost, rto_charge, damaged, refund_amount, return_shipping, notes, product_id, courier_id, items_cost, taken_by, product:products(name), courier:couriers(name), items:order_items(product_id, qty, unit_cost, unit_price, product:products(name))";
 
 async function Orders({ searchParams }: { searchParams: Promise<Search> }) {
   const sp = await searchParams;

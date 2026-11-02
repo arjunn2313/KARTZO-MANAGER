@@ -5,6 +5,7 @@ import { shiftDays } from "@/lib/dashboard";
 import { createClient } from "@/lib/supabase/server";
 import { requestToday } from "@/lib/today";
 import { AdsView } from "./ads-view";
+import type { ProductSpend } from "./product-spend";
 
 type Search = { show?: string };
 
@@ -21,7 +22,16 @@ async function Ads({ searchParams }: { searchParams: Promise<Search> }) {
   const supabase = await createClient(); // cookies first, so "today" is per request
   const today = await requestToday();
   const all = sp.show === "all";
-  const w = await loadWallet(supabase, all ? null : shiftDays(today, -60), today);
+  const [w, products, spend] = await Promise.all([
+    loadWallet(supabase, all ? null : shiftDays(today, -60), today),
+    supabase.from("products").select("id, name, active").order("name"),
+    supabase
+      .from("product_ad_spend")
+      .select("date, product_id, amount")
+      .gte("date", shiftDays(today, all ? -400 : -60))
+      .order("date", { ascending: false })
+      .limit(5000),
+  ]);
 
   if (!w.ready) {
     return (
@@ -41,5 +51,16 @@ async function Ads({ searchParams }: { searchParams: Promise<Search> }) {
     );
   }
 
-  return <AdsView today={today} all={all} readings={w.readings} recharges={w.recharges} periods={w.periods} gst={w.gst} />;
+  return (
+    <AdsView
+      today={today}
+      all={all}
+      readings={w.readings}
+      recharges={w.recharges}
+      periods={w.periods}
+      gst={w.gst}
+      products={(products.data ?? []) as { id: string; name: string; active: boolean }[]}
+      productSpend={spend.error ? null : ((spend.data ?? []) as ProductSpend[])}
+    />
+  );
 }

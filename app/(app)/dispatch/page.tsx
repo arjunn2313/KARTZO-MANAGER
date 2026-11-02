@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { PageSkeleton } from "@/components/skeleton";
 import { shiftDays } from "@/lib/dashboard";
 import { DEFAULT_MESSAGE, DEFAULT_MESSAGE_ML } from "@/lib/dispatch";
+import { lookupPincode } from "@/lib/pincode";
 import { createClient } from "@/lib/supabase/server";
 import { requestToday } from "@/lib/today";
 import { DispatchView, type DispatchOrder } from "./dispatch-view";
@@ -20,7 +21,7 @@ export default function DispatchPage({ searchParams }: { searchParams: Promise<S
 }
 
 const COLS =
-  "id, order_code, order_date, dispatch_date, customer_name, phone, pincode, payment_mode, order_type, order_value, cod_balance, tracking_id, status, whatsapp_sent_at, label_printed_at, items:order_items(qty, product:products(id, name))";
+  "id, order_code, address, order_date, created_at, dispatch_date, customer_name, phone, pincode, payment_mode, order_type, order_value, cod_balance, tracking_id, status, whatsapp_sent_at, label_printed_at, courier:couriers(name), items:order_items(qty, product:products(id, name))";
 
 async function Dispatch({ searchParams }: { searchParams: Promise<Search> }) {
   const sp = await searchParams;
@@ -63,11 +64,24 @@ async function Dispatch({ searchParams }: { searchParams: Promise<Search> }) {
       today={today}
       days={days}
       initialTab={sp.tab === "send" || sp.tab === "sent" ? sp.tab : undefined}
-      toPack={(toPack.data ?? []) as unknown as DispatchOrder[]}
+      toPack={((toPack.data ?? []) as unknown as DispatchOrder[]).map((o) => ({ ...o, address: postbulkAddress(o.address ?? "", o.pincode ?? "") }))}
       dispatched={(sent.data ?? []) as unknown as DispatchOrder[]}
       business={kv.business_name || "Kartzo"}
       templates={{ en: kv.dispatch_message || DEFAULT_MESSAGE, ml: kv.dispatch_message_ml || DEFAULT_MESSAGE_ML }}
       labelNote={kv.label_note ?? ""}
     />
   );
+}
+
+/** Makes sure the address ends with "DISTRICT, STATE - PIN" (postbulk needs the pincode on the last line). */
+function postbulkAddress(address: string, pincode: string) {
+  const lines = address
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((l) => l.replace(/\s+/g, " ").trim().toUpperCase())
+    .filter(Boolean);
+  if (!pincode || lines.some((l) => /(?<!\d)[1-9]\d{5}(?!\d)/.test(l))) return lines.join("\n");
+  const info = lookupPincode(pincode);
+  lines.push(info ? `${info.district.toUpperCase()}, ${info.state.toUpperCase()} - ${pincode}` : `PIN - ${pincode}`);
+  return lines.join("\n");
 }

@@ -82,3 +82,34 @@ export async function setAdGst(percent: number): Promise<Result> {
   refresh();
   return { ok: true, message: parsed.data ? `Recharges now count ${parsed.data}% GST` : "GST off" };
 }
+
+const spendSchema = z.object({
+  date: z.iso.date("Pick a date"),
+  amounts: z.record(z.uuid(), rupees.nullable()),
+});
+
+/** Saves each product's campaign spend for a day (empty = remove). */
+export async function saveProductSpend(input: z.input<typeof spendSchema>): Promise<Result> {
+  const supabase = await requireUser();
+  const parsed = spendSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Check the amounts" };
+  const { date, amounts } = parsed.data;
+  const rows = Object.entries(amounts)
+    .filter(([, v]) => v !== null)
+    .map(([product_id, amount]) => ({ date, product_id, amount: amount as number }));
+  const clear = Object.entries(amounts)
+    .filter(([, v]) => v === null)
+    .map(([id]) => id);
+
+  const fix = (m: string) => (m.includes("product_ad_spend") ? "Run DATABASE-UPDATE-15.sql in Supabase first" : m);
+  if (rows.length) {
+    const { error } = await supabase.from("product_ad_spend").upsert(rows, { onConflict: "date,product_id" });
+    if (error) return { ok: false, message: fix(error.message) };
+  }
+  if (clear.length) {
+    const { error } = await supabase.from("product_ad_spend").delete().eq("date", date).in("product_id", clear);
+    if (error) return { ok: false, message: fix(error.message) };
+  }
+  refresh();
+  return { ok: true, message: rows.length ? "Product spend saved" : "Product spend cleared" };
+}

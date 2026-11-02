@@ -23,6 +23,7 @@ export type OrderRow = {
   id: string;
   order_code: string;
   order_date: string;
+  created_at?: string;
   dispatch_date: string | null;
   customer_name: string;
   phone: string | null;

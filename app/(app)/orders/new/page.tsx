@@ -25,9 +25,18 @@ async function Form() {
   const [products, couriers, staff] = await Promise.all([
     supabase.from("products").select("id, name, price_paid, price_cod, cost, image_url").eq("active", true).order("name", { ascending: false }),
     supabase.from("couriers").select("id, name, default_shipping_cost, shipping_cost_outside, default_rto_charge, cod_fee_slabs").eq("active", true).order("name"),
-    supabase.from("app_settings").select("value").eq("key", "staff_name").maybeSingle(),
+    supabase.from("app_settings").select("key, value").in("key", ["staff_name", "business_name"]),
   ]);
   const error = products.error ?? couriers.error;
   if (error) return <p className="text-sm text-red-600">{error.message}</p>;
-  return <AddOrderTabs products={products.data as ProductOption[]} couriers={couriers.data as CourierOption[]} today={await requestToday()} staffName={staff.data?.value || "Staff"} />;
+  const kv = Object.fromEntries((staff.data ?? []).map((r) => [r.key as string, r.value as string]));
+  return (
+    <AddOrderTabs
+      products={products.data as ProductOption[]}
+      couriers={couriers.data as CourierOption[]}
+      today={await requestToday()}
+      staffName={kv.staff_name || "Staff"}
+      business={kv.business_name || "Kartzo"}
+    />
+  );
 }

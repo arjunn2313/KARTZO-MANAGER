@@ -842,8 +842,17 @@ function Pagination({ page, pageCount, total, size }: { page: number; pageCount:
 
 /* ---------------- Bulk tracking dialog ---------------- */
 
+/** First added first: the same order postbulk / Dispatch copies them in, so the barcodes line up. */
+function oldestFirst(a: OrderRow, b: OrderRow) {
+  return (
+    a.order_date.localeCompare(b.order_date) ||
+    (a.created_at ?? "").localeCompare(b.created_at ?? "") ||
+    (Number(a.order_code.replace(/\D/g, "")) || 0) - (Number(b.order_code.replace(/\D/g, "")) || 0)
+  );
+}
+
 function TrackingDialog({
-  orders,
+  orders: picked,
   onClose,
   onDone,
 }: {
@@ -851,6 +860,11 @@ function TrackingDialog({
   onClose: () => void;
   onDone: (r: BulkResult) => void;
 }) {
+  const [newestFirst, setNewestFirst] = useState(false);
+  const orders = useMemo(() => {
+    const list = [...picked].sort(oldestFirst);
+    return newestFirst ? list.reverse() : list;
+  }, [picked, newestFirst]);
   const [text, setText] = useState("");
   const [markDispatched, setMarkDispatched] = useState(true);
   const [pending, startTransition] = useTransition();
@@ -881,6 +895,21 @@ function TrackingDialog({
             <p className="text-sm text-stone-500">
               Paste one tracking ID per line, in the same order as the {orders.length} orders shown.
             </p>
+            <div className="mt-2 inline-flex rounded-lg bg-stone-100 p-0.5 text-xs font-medium">
+              {[
+                [false, "First added first (postbulk order)"],
+                [true, "Last added first"],
+              ].map(([v, label]) => (
+                <button
+                  key={String(v)}
+                  type="button"
+                  onClick={() => setNewestFirst(v as boolean)}
+                  className={`rounded-md px-2.5 py-1 ${newestFirst === v ? "bg-white text-stone-900 shadow-sm" : "text-stone-500"}`}
+                >
+                  {label as string}
+                </button>
+              ))}
+            </div>
           </div>
           <button onClick={onClose} className="rounded-md px-2 py-1 text-stone-400 hover:bg-stone-100" aria-label="Close">
             ✕
